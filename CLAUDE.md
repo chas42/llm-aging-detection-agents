@@ -13,5 +13,7 @@ for the workflow, layout and contracts, and docs/PLANO.md for the current plan a
 - Long diagnostic runs happen on an isolated machine via `deploy/` (pack.sh → setup.sh → preflight.sh →
   campaign_uptime_F4.sh → collect_results.sh); results come back as tarballs extracted into `runs/`.
   After changing apps/workloads/harness, rebuild the bundle with `bash deploy/pack.sh`.
+  Two-machine mode: harness/server_agent.py (server) + harness/run_remote.py (client); both reuse
+  start_app()/run_workload() from run_diagnostic.py, so keep those shared helpers the single code path.
 - Use `.venv/bin/python` for everything. Long runs (≥10 min) go in the background.
 - The sibling projects `../baxbench_LLM_code` and `../generated-software-llm` are read-only sources.

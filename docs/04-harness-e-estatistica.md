@@ -19,6 +19,32 @@ Parâmetros importantes: `--instrument` (liga as probes), `--interval` (amostrag
 padrão 5 s) e `--watch` (arquivos cujo tamanho é medido, padrão `db.sqlite3`). Se a porta já
 estiver em uso, ele se recusa a rodar.
 
+O workload roda sob um segundo monitor, que gera o `client_monitor.csv` (CPU e memória do próprio
+gerador de carga). Isso serve para descartar a hipótese de que a degradação vem do cliente
+saturado.
+
+### Modo com dois PCs: `harness/server_agent.py` + `harness/run_remote.py`
+Mesmo fluxo do `run_diagnostic.py`, dividido entre duas máquinas. As duas reutilizam as mesmas
+funções (`start_app`, `run_workload`), então o formato dos dados é idêntico.
+
+- **`server_agent.py`** (servidor): serviço HTTP só com biblioteca padrão, na porta 9000, protegido
+  por token. Endpoints: `GET /time`, `GET /status`, `POST /runs/start`, `POST /runs/<id>/stop` e
+  `GET /runs/<id>/archive`. Roda uma execução por vez; um watchdog derruba a app se o cliente sumir;
+  só aceita apps de dentro de `apps/`. A app sobe em `0.0.0.0:8000`.
+- **`run_remote.py`** (cliente):
+  1. mede a diferença de relógio;
+  2. pede a app;
+  3. confere se o hash do código da app é igual nos dois lados;
+  4. roda o workload contra `http://<servidor>:8000`;
+  5. encerra a execução, mede o relógio de novo e baixa e extrai as evidências do servidor
+     na mesma pasta de execução.
+- **Relógios:** `offset = relógio_servidor − relógio_cliente`, estimado com 15 chamadas a `/time`,
+  usando a de menor RTT (método de Cristian). É medido no início e no fim, e a deriva vai para
+  `meta.json → clock`. O `analyze_run.py` subtrai o offset dos timestamps do servidor
+  (`monitor.csv`, `instrumentation.jsonl`), e assim todas as séries ficam no relógio do cliente.
+- Lançadores: `deploy/server_agent.sh` (gera o token e imprime os comandos para o cliente) e
+  `deploy/campaign_uptime_F4.sh` com `SERVER=…`. Ver [deploy/README.md](../deploy/README.md#modo-com-dois-pcs-servidor--cliente).
+
 ### `harness/monitor.py`: lado do servidor
 É o sucessor dos scripts `collect-data` do paper (que usavam `ps`), agora com `psutil`. Amostra o
 processo do servidor e seus filhos:
@@ -38,6 +64,7 @@ Lê `monitor.csv`, `client.csv` e `instrumentation.jsonl` e monta as séries tem
 | prefixo | origem | exemplos |
 |---|---|---|
 | `server.*` | monitor (amostra bruta) | `server.rss_mb`, `server.num_fds`, `server.watched_files_mb` |
+| `loadgen.*` | monitor do gerador de carga | `loadgen.cpu_percent`, `loadgen.rss_mb` |
 | `client.<endpoint>.*` | cliente, agregado em janelas (`--window`, padrão 60 s) | `latency_p50_ms`, `latency_p95_ms`, `resp_bytes_mean`, `throughput_rps`, `error_rate` |
 | `instr.*` | snapshots das probes | `instr.rows.total`, `instr.fetch_ms.max`, `instr.lock_wait_ms.max` |
 
@@ -105,8 +132,9 @@ mesmo com a correção de autocorrelação. *(Valores ilustrativos.)*
 
 ## Cuidados de medição
 
-- **Mesma máquina para app e carga:** isolados por CPU (`taskset`). O juiz verifica se o cliente
-  saturou (timeouts, CPU).
+- **Mesma máquina para app e carga:** isolados por CPU (`taskset`). Com dois PCs, o problema
+  desaparece, mas a latência passa a incluir a rede (RTT registrado). Nos dois casos, o juiz
+  verifica se o cliente saturou (`loadgen.cpu_percent`, timeouts).
 - **WSL e laptops:** as medições servem para depuração. Para resultados do paper, use a máquina
   isolada ([deploy/README.md](../deploy/README.md)).
 - **Overhead das probes:** a thread de snapshot segura o lock da app a cada 10 s para contar

@@ -6,6 +6,7 @@ Every run gets its own directory under runs/ with all evidence:
         server.log               app stdout/stderr
         monitor.csv              server-side psutil samples (see harness/monitor.py)
         client.csv               per-request client log written by the workload
+        client_monitor.csv       psutil samples of the load generator itself (client saturation check)
         workload.log             workload stdout/stderr
         instrumentation.jsonl    only if --instrument and the app is instrumented
         meta.json                parameters, file hashes, timings, exit codes
@@ -13,6 +14,9 @@ Every run gets its own directory under runs/ with all evidence:
 Workload contract (what workload scripts must accept):
     python <workload.py> --base-url URL --duration SECONDS --seed N --out client.csv [extra args]
 and write client.csv with at least: ts,endpoint,status,latency_ms,resp_bytes
+
+Two-machine mode (server and load generator on different hosts): harness/server_agent.py on the
+server + harness/run_remote.py on the client; both reuse start_app()/run_workload() from here.
 
 Example:
     .venv/bin/python harness/run_diagnostic.py --app apps/uptime-fastapi/original \\
@@ -82,6 +86,68 @@ def stop_process(proc: subprocess.Popen) -> int | None:
     return None
 
 
+def new_run_dir(label: str) -> Path:
+    stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+    run_dir = ROOT / "runs" / f"{stamp}_{label}"
+    run_dir.mkdir(parents=True)
+    return run_dir
+
+
+def resolve_app(app: str) -> Path:
+    """App directories must live under apps/ (also guards the remote agent against path traversal)."""
+    path = (ROOT / app).resolve()
+    if not path.is_dir() or (ROOT / "apps").resolve() not in path.parents:
+        raise ValueError(f"app dir must be an existing directory under apps/: {app}")
+    return path
+
+
+def start_app(run_dir: Path, app: str, entrypoint: str, host: str, port: int, instrument: bool,
+              cpus: str | None) -> tuple[subprocess.Popen, dict]:
+    """Copy the app into run_dir/workdir (fresh database) and start uvicorn. Shared by the local
+    mode below and by harness/server_agent.py (two-machine mode)."""
+    workdir = run_dir / "workdir"
+    shutil.copytree(resolve_app(app), workdir, ignore=IGNORE)
+    env = dict(os.environ, APP_SECRET=os.environ.get("APP_SECRET", "supers3cret"), PYTHONUNBUFFERED="1")
+    if instrument:
+        env["AGING_INSTRUMENT"] = "1"
+        env["AGING_INSTRUMENT_LOG"] = str(run_dir / "instrumentation.jsonl")
+    cmd = pinned([PYTHON, "-m", "uvicorn", entrypoint, "--host", host, "--port", str(port),
+                  "--log-level", "warning"], cpus)
+    with open(run_dir / "server.log", "w") as log:  # the child keeps its own descriptor
+        proc = subprocess.Popen(cmd, cwd=workdir, env=env, stdout=log, stderr=subprocess.STDOUT)
+    info = {"app": app, "entrypoint": entrypoint, "bind": f"{host}:{port}", "instrument": instrument,
+            "app_cpus": cpus, "app_hashes": hash_tree(workdir), "server_cmd": cmd,
+            "host": {"platform": platform.platform(), "python": platform.python_version(),
+                     "cpus": os.cpu_count(), "hostname": platform.node()}}
+    return proc, info
+
+
+def run_workload(run_dir: Path, workload: str, base_url: str, duration: int, seed: int, extra: list[str],
+                 cpus: str | None, interval: float) -> dict:
+    """Run the workload script, sampling the load generator itself into client_monitor.csv so that
+    client-side saturation can be ruled out."""
+    cmd = pinned([PYTHON, str(ROOT / workload), "--base-url", base_url, "--duration", str(duration),
+                  "--seed", str(seed), "--out", str(run_dir / "client.csv")] + extra, cpus)
+    info = {"workload": workload, "workload_args": extra, "duration_s": duration, "seed": seed,
+            "load_cpus": cpus, "workload_cmd": cmd,
+            "workload_hash": hashlib.sha256((ROOT / workload).read_bytes()).hexdigest()[:16]}
+    print(f"[run] {run_dir.name}: workload running for {duration}s against {base_url} ...", flush=True)
+    with open(run_dir / "workload.log", "w") as wlog:
+        proc = subprocess.Popen(cmd, stdout=wlog, stderr=subprocess.STDOUT)
+        mon = Monitor(proc.pid, str(run_dir / "client_monitor.csv"), interval)
+        mon.start()
+        info["start"] = time.time()
+        try:
+            info["workload_exit"] = proc.wait(timeout=duration + 120)
+        except subprocess.TimeoutExpired:
+            stop_process(proc)
+            info["workload_exit"] = "timeout"
+        info["end"] = time.time()
+        mon.stop()
+        mon.join(10)
+    return info
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--app", required=True, help="app directory containing the ASGI module")
@@ -104,31 +170,16 @@ def main() -> int:
         print(f"port {args.port} already in use; refusing to start", file=sys.stderr)
         return 2
 
-    stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
-    run_dir = ROOT / "runs" / f"{stamp}_{args.label}"
-    workdir = run_dir / "workdir"
-    shutil.copytree(ROOT / args.app, workdir, ignore=IGNORE)
-
-    env = dict(os.environ, APP_SECRET=os.environ.get("APP_SECRET", "supers3cret"), PYTHONUNBUFFERED="1")
-    if args.instrument:
-        env["AGING_INSTRUMENT"] = "1"
-        env["AGING_INSTRUMENT_LOG"] = str(run_dir / "instrumentation.jsonl")
-
-    meta = {
-        "label": args.label, "app": args.app, "entrypoint": args.entrypoint,
-        "workload": args.workload, "workload_args": extra, "duration_s": args.duration,
-        "seed": args.seed, "port": args.port, "monitor_interval_s": args.interval,
-        "instrument": args.instrument, "app_cpus": args.app_cpus, "load_cpus": args.load_cpus,
-        "app_hashes": hash_tree(workdir),
-        "workload_hash": hashlib.sha256((ROOT / args.workload).read_bytes()).hexdigest()[:16],
-        "host": {"platform": platform.platform(), "python": platform.python_version(), "cpus": os.cpu_count()},
-    }
-
-    server_log = open(run_dir / "server.log", "w")
-    server_cmd = pinned([PYTHON, "-m", "uvicorn", args.entrypoint, "--host", "127.0.0.1",
-                         "--port", str(args.port), "--log-level", "warning"], args.app_cpus)
-    server = subprocess.Popen(server_cmd, cwd=workdir, env=env, stdout=server_log, stderr=subprocess.STDOUT)
-    meta["server_cmd"] = server_cmd
+    try:
+        resolve_app(args.app)
+    except ValueError as e:
+        print(e, file=sys.stderr)
+        return 2
+    run_dir = new_run_dir(args.label)
+    server, app_info = start_app(run_dir, args.app, args.entrypoint, "127.0.0.1", args.port,
+                                 args.instrument, args.app_cpus)
+    meta = {"mode": "local", "label": args.label, "port": args.port, "monitor_interval_s": args.interval,
+            **app_info}
 
     monitor = None
     try:
@@ -136,31 +187,17 @@ def main() -> int:
             meta["error"] = "server did not start within 30s (see server.log)"
             print(meta["error"], file=sys.stderr)
             return 1
-
         monitor = Monitor(server.pid, str(run_dir / "monitor.csv"), args.interval,
-                          [str(workdir / w) for w in args.watch])
+                          [str(run_dir / "workdir" / w) for w in args.watch])
         monitor.start()
-
-        meta["start"] = time.time()
-        workload_cmd = pinned([PYTHON, str(ROOT / args.workload), "--base-url", f"http://127.0.0.1:{args.port}",
-                               "--duration", str(args.duration), "--seed", str(args.seed),
-                               "--out", str(run_dir / "client.csv")] + extra, args.load_cpus)
-        meta["workload_cmd"] = workload_cmd
-        print(f"[run] {run_dir.name}: workload running for {args.duration}s ...", flush=True)
-        with open(run_dir / "workload.log", "w") as wlog:
-            try:
-                meta["workload_exit"] = subprocess.run(workload_cmd, stdout=wlog, stderr=subprocess.STDOUT,
-                                                       timeout=args.duration + 120).returncode
-            except subprocess.TimeoutExpired:
-                meta["workload_exit"] = "timeout"
-        meta["end"] = time.time()
+        meta.update(run_workload(run_dir, args.workload, f"http://127.0.0.1:{args.port}", args.duration,
+                                 args.seed, extra, args.load_cpus, args.interval))
         meta["server_alive_at_end"] = server.poll() is None
     finally:
         if monitor:
             monitor.stop()
             monitor.join(10)
         meta["server_exit"] = stop_process(server)
-        server_log.close()
         (run_dir / "meta.json").write_text(json.dumps(meta, indent=2))
         print(f"[run] done -> {run_dir.relative_to(ROOT)}", flush=True)
     return 0 if meta.get("workload_exit") == 0 else 1

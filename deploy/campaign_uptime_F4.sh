@@ -6,10 +6,15 @@
 #   R1   targeted: a new serviceId every 1/10 s (the finding's trigger)
 # then analyzes each run and packs everything with deploy/collect_results.sh.
 #
-# Configuration via environment variables (defaults in brackets):
-#   DURATION [3600]  seconds per run        RUNS ["R0 R0b R1"]   subset/order of runs
-#   APP_CPUS [0]     server CPU list        LOAD_CPUS [1-3]      workload CPU list
-#   SEED [42]        workload seed          COOLDOWN [120]       idle seconds between runs
+# Modes:
+#   one machine : bash deploy/campaign_uptime_F4.sh
+#   two machines: on the CLIENT, with deploy/server_agent.sh running on the server:
+#                 SERVER=http://<server-ip>:9000 AGING_AGENT_TOKEN=<token> bash deploy/campaign_uptime_F4.sh
+#
+# Configuration via environment variables (defaults in brackets; two-machine defaults in braces):
+#   DURATION [3600]  seconds per run              RUNS ["R0 R0b R1"]   subset/order of runs
+#   APP_CPUS [0] {agent's}  server CPU list       LOAD_CPUS [1-3] {none}  workload CPU list
+#   SEED [42]        workload seed                COOLDOWN [120]       idle seconds between runs
 #
 # Run it detached so it survives an SSH disconnect, e.g.:
 #   tmux new -s aging 'bash deploy/campaign_uptime_F4.sh'
@@ -19,7 +24,14 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 PY=.venv/bin/python
 DURATION="${DURATION:-3600}"; RUNS="${RUNS:-R0 R0b R1}"; SEED="${SEED:-42}"
-APP_CPUS="${APP_CPUS-0}"; LOAD_CPUS="${LOAD_CPUS-1-3}"; COOLDOWN="${COOLDOWN:-120}"
+COOLDOWN="${COOLDOWN:-120}"; SERVER="${SERVER:-}"
+if [[ -n "$SERVER" ]]; then
+  MODE=remote; APP_CPUS="${APP_CPUS-}"; LOAD_CPUS="${LOAD_CPUS-}"
+  [[ -n "${AGING_AGENT_TOKEN:-}" ]] || { echo "two-machine mode needs AGING_AGENT_TOKEN"; exit 2; }
+  export AGING_AGENT_TOKEN
+else
+  MODE=local; APP_CPUS="${APP_CPUS-0}"; LOAD_CPUS="${LOAD_CPUS-1-3}"
+fi
 TARGETED=workloads/uptime-fastapi-F4_targeted_v1.py
 CONTROL=workloads/uptime-fastapi-F4_control.py
 APP=apps/uptime-fastapi/instrumented
@@ -40,15 +52,26 @@ log() { echo "[$(date '+%F %T')] $*" | tee -a "$LOG"; }
   echo "## disk";      df -h . ; findmnt -T . -o SOURCE,FSTYPE,OPTIONS 2>/dev/null
   echo "## python";    $PY -V
   echo "## packages";  $PY -m pip freeze
-  echo "## config";    echo "DURATION=$DURATION RUNS='$RUNS' SEED=$SEED APP_CPUS=$APP_CPUS LOAD_CPUS=$LOAD_CPUS COOLDOWN=$COOLDOWN"
+  echo "## config";    echo "MODE=$MODE SERVER=$SERVER DURATION=$DURATION RUNS='$RUNS' SEED=$SEED APP_CPUS=$APP_CPUS LOAD_CPUS=$LOAD_CPUS COOLDOWN=$COOLDOWN"
+  if [[ $MODE == remote ]]; then
+    echo "## server (agent status)"
+    $PY -c "import os,sys,json; sys.path.insert(0,'harness'); from run_remote import AgentClient; a=AgentClient('$SERVER', os.environ['AGING_AGENT_TOKEN']); print(json.dumps(a.call('GET','/status'), indent=1)); print('clock', a.clock_offset())"
+    echo "## network"; ping -c 5 -q "$(echo "$SERVER" | sed -E 's#https?://([^:/]+).*#\1#')" 2>&1 | tail -2
+  fi
 } > "$CAMP/system.txt" 2>&1
 
 run() {  # run <label> <workload> [workload args...]
   local label="$1" workload="$2"; shift 2
   log "START $label ($workload $*) for ${DURATION}s"
-  $PY harness/run_diagnostic.py --app "$APP" --instrument --workload "$workload" \
-      --duration "$DURATION" --seed "$SEED" --label "$label" \
-      --app-cpus "$APP_CPUS" --load-cpus "$LOAD_CPUS" -- "$@" >> "$LOG" 2>&1
+  if [[ $MODE == remote ]]; then
+    $PY harness/run_remote.py --server "$SERVER" --app "$APP" --instrument --workload "$workload" \
+        --duration "$DURATION" --seed "$SEED" --label "$label" \
+        ${APP_CPUS:+--app-cpus "$APP_CPUS"} ${LOAD_CPUS:+--load-cpus "$LOAD_CPUS"} -- "$@" >> "$LOG" 2>&1
+  else
+    $PY harness/run_diagnostic.py --app "$APP" --instrument --workload "$workload" \
+        --duration "$DURATION" --seed "$SEED" --label "$label" \
+        --app-cpus "$APP_CPUS" --load-cpus "$LOAD_CPUS" -- "$@" >> "$LOG" 2>&1
+  fi
   local rc=$?
   local dir; dir=$(ls -d runs/*_"$label" 2>/dev/null | tail -1)
   log "END   $label exit=$rc dir=$dir"
@@ -59,7 +82,7 @@ run() {  # run <label> <workload> [workload args...]
 }
 
 TOTAL=$(( $(wc -w <<< "$RUNS") * (DURATION + COOLDOWN) / 60 ))
-log "campaign $CAMP: runs='$RUNS', ~${TOTAL} min total"
+log "campaign $CAMP ($MODE${SERVER:+, server $SERVER}): runs='$RUNS', ~${TOTAL} min total"
 first=1
 for r in $RUNS; do
   [[ $first -eq 0 ]] && { log "cooldown ${COOLDOWN}s"; sleep "$COOLDOWN"; }

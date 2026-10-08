@@ -12,6 +12,7 @@ import argparse
 import json
 import math
 import sys
+import warnings
 from pathlib import Path
 
 import matplotlib
@@ -21,6 +22,9 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 import pymannkendall as mk  # noqa: E402
+
+# pymannkendall divides by a zero autocovariance on near-constant series; the result is still handled.
+warnings.filterwarnings("ignore", category=RuntimeWarning, module="pymannkendall")
 
 ALPHA = 0.05
 MAX_POINTS = 1500  # Sen's slope is O(n^2); longer series are evenly downsampled
@@ -32,11 +36,14 @@ MB = 1024 * 1024
 def load_series(run: Path, window: float, warmup: float) -> dict[str, pd.Series]:
     """Return {name: Series indexed by elapsed hours}."""
     meta = json.loads((run / "meta.json").read_text())
-    t0 = meta.get("start") or 0.0
+    t0 = meta.get("start") or 0.0  # client clock
+    # Two-machine runs: server-side timestamps (monitor, instrumentation) are on the server clock;
+    # offset_s = server - client, so subtracting it maps them onto the client clock.
+    srv_offset = meta.get("clock", {}).get("offset_s", 0.0)
     series: dict[str, pd.Series] = {}
 
-    def add(name: str, ts: pd.Series, values: pd.Series) -> None:
-        hours = (ts - t0) / 3600.0
+    def add(name: str, ts: pd.Series, values: pd.Series, server_side: bool = False) -> None:
+        hours = (ts - (srv_offset if server_side else 0.0) - t0) / 3600.0
         s = pd.Series(values.to_numpy(dtype=float), index=hours.to_numpy()).dropna()
         s = s[s.index >= warmup / 3600.0]
         if len(s) >= 3:
@@ -45,12 +52,18 @@ def load_series(run: Path, window: float, warmup: float) -> dict[str, pd.Series]
     mon = run / "monitor.csv"
     if mon.exists():
         df = pd.read_csv(mon)
-        add("server.rss_mb", df.ts, df.rss_bytes / MB)
-        add("server.uss_mb", df.ts, df.uss_bytes / MB)
-        add("server.num_fds", df.ts, df.num_fds)
-        add("server.num_threads", df.ts, df.num_threads)
-        add("server.cpu_percent", df.ts, df.cpu_percent)
-        add("server.watched_files_mb", df.ts, df.watched_bytes / MB)
+        add("server.rss_mb", df.ts, df.rss_bytes / MB, True)
+        add("server.uss_mb", df.ts, df.uss_bytes / MB, True)
+        add("server.num_fds", df.ts, df.num_fds, True)
+        add("server.num_threads", df.ts, df.num_threads, True)
+        add("server.cpu_percent", df.ts, df.cpu_percent, True)
+        add("server.watched_files_mb", df.ts, df.watched_bytes / MB, True)
+
+    lg = run / "client_monitor.csv"  # the load generator itself: rules out client saturation
+    if lg.exists():
+        df = pd.read_csv(lg)
+        add("loadgen.cpu_percent", df.ts, df.cpu_percent)
+        add("loadgen.rss_mb", df.ts, df.rss_bytes / MB)
 
     cli = run / "client.csv"
     if cli.exists():
@@ -89,7 +102,7 @@ def load_series(run: Path, window: float, warmup: float) -> dict[str, pd.Series]
             df = pd.DataFrame(rows)
             for col in df.columns:
                 if col != "ts" and pd.api.types.is_numeric_dtype(df[col]):
-                    add(f"instr.{col}", df.ts, df[col])
+                    add(f"instr.{col}", df.ts, df[col], True)
     return series
 
 

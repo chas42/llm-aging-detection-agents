@@ -14,6 +14,16 @@ máquina de desenvolvimento, com os agentes.
  8. agentes: activation judge ◄── results ──── 6/7. deploy/collect_results.sh (automático)
 ```
 
+**Dois modos de execução** (mesmo bundle, mesmos scripts):
+
+| modo | quando usar | onde está no tutorial |
+|---|---|---|
+| **Um PC** | um único PC isolado faz tudo (app + carga, separados por CPU) | passos 0–8 abaixo |
+| **Dois PCs** ★ | um PC é o **servidor** (app + coleta) e outro o **cliente** (carga), como no paper original | passos 0–3 abaixo, depois [Modo com dois PCs](#modo-com-dois-pcs-servidor--cliente) |
+
+★ Recomendado quando houver dois PCs: a carga não disputa CPU com a app, e a latência inclui uma
+rede real.
+
 ---
 
 ## 0. Requisitos da máquina isolada
@@ -183,13 +193,110 @@ Na máquina de desenvolvimento, com o Claude Code, peça a **Fase 4**: rodar o
 
 ---
 
+## Modo com dois PCs (servidor + cliente)
+
+```
+ PC CLIENTE (carga)                                   PC SERVIDOR (app + coleta)
+ ──────────────────                                   ──────────────────────────
+ campaign_uptime_F4.sh  (SERVER=… TOKEN=…)            server_agent.sh  → agente na porta 9000
+   para cada execução (R0, R0b, R1):
+   ├─ mede a diferença de relógio ── GET /time ─────►
+   ├─ pede uma app nova ──────────── POST /runs/start ► copia a app (DB vazio), sobe :8000,
+   │                                                   liga o monitor psutil + probes
+   ├─ roda o workload ─────────────── HTTP :8000 ────► app
+   ├─ monitora o próprio gerador de carga
+   ├─ encerra ─────────────────────── POST …/stop ───► para app e monitor
+   └─ baixa as evidências ◄────────── GET …/archive ── monitor.csv, instrumentation.jsonl, server.log, DB
+ runs/<ts>_<label>/   ← pasta única com cliente + servidor, igual ao modo de um PC
+```
+
+O cliente **controla tudo**. Você só precisa deixar o agente rodando no servidor. Não é preciso
+configurar SSH entre os PCs.
+
+### Requisitos extras
+- **Mesmo bundle nos dois PCs** (o preflight do cliente confere a versão e o hash do código da app).
+- Rede local, de preferência **por cabo**. O cliente precisa alcançar as portas **9000** (agente) e
+  **8000** (app) do servidor.
+- Relógios: NTP é desejável, mas não obrigatório. A diferença é medida a cada execução e corrigida
+  na análise.
+- Os dois PCs seguem os requisitos do passo 0. A fixação de CPU fica **desligada** por padrão nesse
+  modo, porque cada PC tem um papel só.
+
+### Passo a passo
+
+**1. Nos dois PCs:** passos 1–3 deste tutorial (gerar o bundle **uma vez**, copiar o mesmo
+`.tar.gz` para os dois, `setup.sh` em cada um).
+
+**2. No SERVIDOR:**
+```bash
+cd ~/aging-validation-bundle-<data>
+ROLE=server bash deploy/preflight.sh          # ambiente + testes funcionais (~1 min)
+# firewall, se o ufw estiver ativo (troque pelo IP do cliente):
+sudo ufw allow from <IP_DO_CLIENTE> to any port 9000,8000 proto tcp
+tmux new -s agent 'bash deploy/server_agent.sh'
+```
+O `server_agent.sh` gera um token secreto (fica em `.agent_token`), mostra o IP do servidor e
+**imprime os comandos exatos para o cliente**, por exemplo:
+```
+ Server agent: http://192.168.0.10:9000   (bundle 20261008-0048)
+   export SERVER=http://192.168.0.10:9000
+   export AGING_AGENT_TOKEN=UTzrXADh...
+```
+Deixe esse tmux aberto (`Ctrl-b d` para sair sem parar o agente).
+
+**3. No CLIENTE:** copie as duas linhas `export` mostradas no servidor e rode:
+```bash
+cd ~/aging-validation-bundle-<data>
+export SERVER=http://192.168.0.10:9000
+export AGING_AGENT_TOKEN=UTzrXADh...
+ROLE=client bash deploy/preflight.sh          # conectividade, token, bundle, relógio, RTT + 60 s remoto
+tmux new -s aging                             # dentro do tmux, exporte as variáveis de novo
+bash deploy/campaign_uptime_F4.sh             # ~3h10 com os padrões
+```
+O preflight do cliente confere:
+- se o agente responde e aceita o token;
+- se o bundle é o **mesmo** nos dois PCs;
+- se o servidor está livre;
+- a diferença de relógio e o RTT (com cabo, espere menos de 1 ms);
+- uma execução remota de 60 s com taxa de erro de aproximadamente 0.
+
+**4. Resultados:** ficam **no cliente**, em `results/aging-results-*.tar.gz`, com os dados do
+servidor já incluídos. Siga os passos 7–8. O servidor também guarda uma cópia do lado dele em
+`runs/`, que serve de backup.
+
+**5. Encerrar o agente:** no servidor, `tmux attach -t agent` e depois `Ctrl-C`. Se o agente for
+encerrado no meio de uma execução, ele para a app antes de sair.
+
+### Segurança e robustez
+- O agente só aceita requisições com o token (comparação em tempo constante) e só sobe apps de
+  dentro de `apps/` do bundle.
+- Se o cliente morrer no meio de uma execução, um **watchdog** derruba a app no servidor depois de
+  `duração + 10 min`.
+- O tráfego é HTTP sem TLS. Use **só em rede local confiável**, nunca exponha a porta 9000 para a
+  internet. Para restringir a uma interface: `BIND=<IP_LAN> bash deploy/server_agent.sh`.
+
+### Variáveis específicas do modo com dois PCs
+
+| variável | onde | padrão | uso |
+|---|---|---|---|
+| `SERVER` | cliente | — | URL do agente; **ativa** o modo remoto na campanha |
+| `AGING_AGENT_TOKEN` | cliente | — | token impresso pelo `server_agent.sh` |
+| `AGENT_PORT`, `BIND` | servidor | `9000`, `0.0.0.0` | porta e interface do agente |
+| `APP_CPUS` | servidor (`server_agent.sh`) ou cliente (campanha) | sem fixação | fixar a app em CPUs do servidor |
+| `LOAD_CPUS` | cliente | sem fixação | fixar o gerador de carga em CPUs do cliente |
+
+---
+
 ## O que cada execução produz
 
 ```
 runs/<ts>_<label>/
-├── meta.json               parâmetros, hashes do código, início/fim, códigos de saída
+├── meta.json               parâmetros, hashes do código, início/fim, códigos de saída;
+│                           em dois PCs também: clock (diferença de relógio, RTT, deriva)
 ├── monitor.csv             a cada 5 s: RSS, USS, VMS, CPU, threads, FDs, tamanho do DB
 ├── client.csv              uma linha por requisição: ts, endpoint, status, latência, bytes, fase
+├── client_monitor.csv      a cada 5 s: CPU/memória do próprio gerador de carga (cliente saturado?)
+├── server_meta.json        (dois PCs) metadados do lado do servidor: bind, hashes, códigos de saída
 ├── instrumentation.jsonl   a cada 10 s: contadores dos caminhos suspeitos e linhas na tabela
 ├── server.log / workload.log
 ├── workdir/                cópia da app usada + db.sqlite3 final (estado acumulado)
@@ -209,12 +316,19 @@ Tamanho esperado por execução de 1 h: client.csv com ~3 MB (R1) a ~25 MB (R0, 
 | preflight: `smoke run unhealthy` | app não sobe ou erros HTTP | veja `runs/_preflight_*/smoke_run/server.log` |
 | `taskset: failed to set pid's affinity` | menos CPUs que o esperado ou restrição de cgroup | `APP_CPUS= LOAD_CPUS=` |
 | `server did not start within 30s` | dependência faltando ou porta ocupada | `runs/<execução>/server.log` |
+| cliente: `agent not reachable` | IP errado, agente parado ou firewall | `curl http://<ip>:9000/time` (deve responder 401); confira o `ufw` |
+| cliente: `401 unauthorized` | token errado ou desatualizado | copie de novo o `export` mostrado pelo `server_agent.sh` |
+| cliente: `bundle mismatch` | bundles diferentes nos dois PCs | copie o **mesmo** `.tar.gz` para os dois |
+| cliente: `app port … not reachable` | porta 8000 bloqueada no servidor | libere a 8000 no firewall para o IP do cliente |
+| cliente: `server busy with <run>` | execução anterior ainda ativa | espere o watchdog ou reinicie o agente (`Ctrl-C` e suba de novo) |
+| RTT alto (> 2 ms) no preflight | Wi-Fi ou rede congestionada | use cabo; anote o RTT no relatório |
 | `analysis` vazio com WARNING | execução muito curta (< 3 min) | normal em testes; nas execuções reais use `DURATION` ≥ 600 |
 
 ## Checklist
 
 - [ ] máquina dedicada, sem outras cargas, alimentação na tomada
 - [ ] `sha256sum -c` OK na ida **e** na volta
-- [ ] `preflight.sh` sem `[FAIL]` (avisos anotados)
+- [ ] `preflight.sh` sem `[FAIL]` (avisos anotados); em dois PCs: `ROLE=server` **e** `ROLE=client`
+- [ ] dois PCs: mesmo bundle nos dois, agente rodando no tmux do servidor, RTT < 2 ms
 - [ ] campanha rodando no tmux/nohup
 - [ ] `results/aging-results-*.tar.gz` copiado e extraído em `aging-validation/runs/`

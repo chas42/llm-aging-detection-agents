@@ -59,6 +59,10 @@ python3 -m venv .venv          # if python3-venv is missing: python3 -m venv --w
 # trend analysis (Mann-Kendall + Hamed-Rao + Sen's slope) and before/after comparison
 .venv/bin/python harness/analyze_run.py runs/<run>
 .venv/bin/python harness/analyze_run.py runs/<before> --compare runs/<after>
+
+# two machines: agent on the server, campaign driven from the client (see deploy/README.md)
+#   server: bash deploy/server_agent.sh
+#   client: SERVER=http://<server>:9000 AGING_AGENT_TOKEN=<token> bash deploy/campaign_uptime_F4.sh
 ```
 
 Workload contract: `script --base-url URL --duration S --seed N --out client.csv [...]`,

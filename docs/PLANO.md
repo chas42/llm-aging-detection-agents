@@ -45,3 +45,7 @@ Decisões tomadas (04/10/2026):
   sem chaves novas), porque o controle fiel ao `.jmx` roda num regime de carga diferente (~90% do
   teto de escrita, contra ~25%).
 - 04/10: documentação completa em `docs/` (comece por `docs/README.md`).
+- 08/10: adicionado o **modo com dois PCs** (servidor = app + coleta; cliente = carga), como no paper
+  original. Um agente de controle HTTP no servidor (`harness/server_agent.py`, com token) é dirigido pelo
+  cliente (`harness/run_remote.py`), que também corrige a diferença de relógio. Testado de ponta a ponta
+  com dois bundles (preflight server/client e campanha de 45 s por execução). Ver `deploy/README.md`.

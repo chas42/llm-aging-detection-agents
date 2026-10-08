@@ -23,6 +23,7 @@ apps/<app>/original ──[instrumentation agent]──► apps/<app>/instrument
 reference/ (API, .jmx) ──[workload generator]──► workloads/<id>_targeted_vN.py, _control.py
                                                        │
                  [run_diagnostic.py] ◄─────────────────┘   (máquina isolada, ver deploy/)
+                  ou server_agent.py (servidor) + run_remote.py (cliente) em dois PCs
                         │
                         ▼
               runs/<ts>_<label>/ {meta.json, monitor.csv, client.csv, instrumentation.jsonl, workdir/}

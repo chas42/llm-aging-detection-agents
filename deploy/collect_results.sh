@@ -12,7 +12,7 @@ OUT="results/aging-results-$(hostname -s)-$(date +%Y%m%d-%H%M%S).tar.gz"
 if [[ -n "${1:-}" ]]; then
   CAMP="${1%/}"
   LIST=("$CAMP" $(cat "$CAMP/runs.txt" 2>/dev/null || true))
-  LIST+=($(ls -d runs/_preflight_* 2>/dev/null | tail -1))
+  LIST+=($(ls -d runs/_preflight_* 2>/dev/null | tail -2))  # last preflight(s), any role
 else
   LIST=(runs/*)
 fi
