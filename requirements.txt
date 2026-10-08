@@ -1,0 +1,9 @@
+# Harness / analysis dependencies (the target apps keep their own requirements.txt)
+psutil
+httpx
+requests
+pymannkendall
+numpy
+pandas
+matplotlib
+pyyaml

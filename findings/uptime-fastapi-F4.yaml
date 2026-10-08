@@ -1,0 +1,62 @@
+# Finding card: the single source of truth that every agent in the pipeline reads.
+# Written manually for the pilot (the "finding classification" step of the workflow).
+
+id: uptime-fastapi-F4
+app: apps/uptime-fastapi/original
+entrypoint: app:app            # uvicorn target, run from the app directory
+source_report: reference/static-analysis/uptime_fastAPI_report.md
+source_findings: ["Finding 4", "Finding 5"]   # F4 = write-side accumulation, F5 = read-side unbounded cost
+classification: supported      # supported | conditional | non-aging
+
+mechanism:
+  summary: >
+    Every POST /heartbeat with a previously unseen (serviceId, token) pair inserts a new
+    row into the `heartbeats` table. There is no cap, TTL, or deletion path, so rows persist
+    for the lifetime of the database. POST /services for a token reads all of that token's
+    rows with fetchall() (no LIMIT/pagination) inside the global _db_lock, then builds one
+    pydantic object per row.
+  resource: rows in the SQLite table `heartbeats` (per token), and the db.sqlite3 file size
+  trigger: POST /heartbeat with distinct serviceId values (request volume alone is NOT enough)
+  gap: no bound / no cleanup / no TTL on rows; no pagination on read
+  suspect_code:
+    - function: upsert_heartbeat      # write path: INSERT ... ON CONFLICT DO UPDATE
+    - function: list_services_for_token   # read path: SELECT ... fetchall() under _db_lock
+    - function: services              # per-row ServiceOut construction + serialization
+
+controllability:
+  level: workload                # workload | environment | uncontrollable
+  notes: >
+    Fully controllable from the client: the workload only needs to send heartbeats with a
+    growing number of distinct serviceIds and periodically read /services for those tokens.
+    No environment manipulation, fault injection, or special runtime is required.
+
+baseline_workload:
+  description: >
+    The original 48h JMeter plan (reference/uptime_test.jmx) uses 1 thread and 4 fixed
+    serviceIds (svc1..svc4) under 4 tokens, so the table never exceeds 4 rows. The finding
+    was therefore never activated in the original experiment. This is the control condition.
+
+activation_criteria:
+  path_executed: >
+    Instrumentation shows upsert_heartbeat and list_services_for_token executing during the run.
+  resource_growth: >
+    Row count (total and for the most-populated token) has a significant increasing
+    Mann-Kendall trend (p < 0.05) AND final/initial ratio >= 10 over the measurement window.
+  control_contrast: >
+    Under the control workload, row count stays constant (<= 4).
+
+expected_symptoms:      # at least one must show a significant increasing trend to call it "aging"
+  - client latency of POST /services (per-window median and p95)
+  - response size of POST /services
+  - db file size
+  - client latency of POST /heartbeat (secondary: index/B-tree growth)
+  - process RSS (NOT expected to grow much: state lives on disk; per-call peaks only)
+  - throughput (expected to decrease if /services cost dominates the lock)
+
+repair_expectation: >
+  A cap/eviction or TTL on rows per token should keep row count, /services latency and
+  response size bounded (no significant trend), at the cost of a small constant overhead
+  on /heartbeat.
+
+loop:
+  max_workload_revisions: 3     # after this, mark the finding as "not controllable"
