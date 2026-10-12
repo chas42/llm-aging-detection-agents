@@ -12,11 +12,14 @@ Output per app, in identification/<app>/tools/:
 Suites reproduce the previous paper (generated-software-llm/code-review-reports and
 baxbench_LLM_code/static-analysis-results), with the same CodeQL CLI and pack versions
 (see static/install_tools.sh). Semgrep registry rulesets (p/default, p/security-audit) are NOT
-versioned by the registry, so their contents may differ from the paper's run.
+versioned by the registry: a snapshot taken on 2026-10-12 lives in static/rules/registry/ and is
+used by default (set AGING_SEMGREP_LIVE=1 to use the live registry instead). Against the paper's
+run, p/default and p/security-audit already differed (registry drift); p/flask matched.
 """
 import argparse
 import gzip
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -26,12 +29,16 @@ from pathlib import Path
 
 import yaml
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from aging_rules import rules_version, scan as scan_aging  # noqa: E402
+
 ROOT = Path(__file__).resolve().parent.parent
 CODEQL = ROOT / "tools" / "codeql" / "codeql"
 SEMGREP = ROOT / ".venv-tools" / "bin" / "semgrep"
 SLOWQL = ROOT / ".venv-tools" / "bin" / "slowql"
-AGING_RULES = ROOT / "static" / "rules" / "aging"
+LEAKAUDIT = ROOT / ".venv-tools" / "bin" / "leakaudit"
 COMMUNITY = "0.2.1"
+REGISTRY = ROOT / "static" / "rules" / "registry"  # snapshot of the Semgrep registry rulesets
 
 # (output name, query suite) per language, as in the previous paper
 CODEQL_SUITES = {
@@ -55,6 +62,7 @@ SEMGREP_CONFIGS = {
     "javascript": [("semgrep-default", "p/default")],
     "rust": [("semgrep-default", "p/default")],
 }
+SEMGREP_FRAMEWORK_CONFIGS = {"flask": [("semgrep-flask", "p/flask")]}  # paper: *_flask_specific.sarif
 SLOWQL_LANGS = {"python": "*.py", "javascript": "*.js"}
 SRC_EXT = {"python": ["*.py"], "javascript": ["*.js", "*.mjs", "*.cjs", "*.ts"], "rust": ["*.rs"]}
 
@@ -83,8 +91,13 @@ def run_codeql(app: dict, src: Path, out: Path, log: list[dict]) -> None:
 
 def run_semgrep(app: dict, src: Path, out: Path, log: list[dict], configs: list[tuple[str, str]]) -> None:
     for name, config in configs:
-        run([SEMGREP, "scan", "--config", config, "--sarif", "--output", out / f"{name}.sarif",
-             "--metrics=off", "--disable-version-check", "--quiet", src], log)
+        cwd = None
+        snapshot = REGISTRY / (config.replace("/", "-") + ".yaml") if config.startswith("p/") else None
+        if snapshot and snapshot.exists() and os.environ.get("AGING_SEMGREP_LIVE") != "1":
+            # run from the snapshot dir so rule ids carry no path prefix (same ids as the registry)
+            config, cwd = snapshot.name, REGISTRY
+        run([SEMGREP, "scan", "--config", config, "--sarif", "--output", (out / f"{name}.sarif").resolve(),
+             "--metrics=off", "--disable-version-check", "--quiet", src.resolve()], log, cwd=cwd)
 
 
 def run_slowql(app: dict, src: Path, out: Path, log: list[dict]) -> None:
@@ -97,6 +110,30 @@ def run_slowql(app: dict, src: Path, out: Path, log: list[dict]) -> None:
              "--export", "json", "sarif", "--out", tmp], log)
         for f in Path(tmp).iterdir():  # timestamped names -> stable names
             shutil.copy(f, out / ("slowql" + f.suffix))
+
+
+def run_leakaudit(app: dict, src: Path, out: Path, log: list[dict]) -> None:
+    if app["language"] != "python":
+        return
+    t = time.time()
+    p = subprocess.run([str(LEAKAUDIT), str(src), "--json"], capture_output=True, text=True, timeout=600)
+    log.append({"cmd": [str(LEAKAUDIT), str(src), "--json"], "exit": p.returncode,
+                "seconds": round(time.time() - t, 1), "stderr_tail": p.stderr[-1500:] if p.returncode else ""})
+    if p.stdout.strip():
+        (out / "leakaudit.json").write_text(p.stdout)
+
+
+def run_aging(app: dict, src: Path, out: Path, log: list[dict]) -> None:
+    """Aging rule set: semgrep + file-level conditions (static/aging_rules.py), JSON output."""
+    t = time.time()
+    kept, dropped, raw = scan_aging(src, app["language"])
+    for item in kept + dropped:
+        item["path"] = str(Path(item["path"]).relative_to(src))
+    (out / "semgrep-aging.json").write_text(json.dumps(
+        {"rules_version": rules_version(), "kept": kept, "dropped": dropped,
+         "errors": raw.get("errors", [])}, indent=1))
+    log.append({"cmd": ["aging_rules.scan", str(src), app["language"]], "exit": 0,
+                "seconds": round(time.time() - t, 1), "stderr_tail": ""})
 
 
 # ----------------------------------------------------------------------------- normalization
@@ -142,6 +179,8 @@ def categorize(source: str, rule: str, tags: list[str]) -> str:
         return "aging"
     if "security" in t or "cwe" in t or "injection" in t:
         return "security"
+    if source == "leakaudit":
+        return "resource-leak"
     if any(k in t for k in ("performance", "efficiency", "resource", "leak")):
         return "performance"
     if any(k in t for k in ("reliability", "correctness", "error-handling")):
@@ -164,6 +203,22 @@ def collect(out: Path, src: Path) -> list[dict]:
                              "line": loc.get("line"), "message": (issue.get("message") or "")[:500],
                              "tags": [issue.get("dimension", "")],
                              "category": categorize("slowql", str(issue.get("rule_id", "")), [issue.get("dimension", "")])})
+    aj = out / "semgrep-aging.json"
+    if aj.exists():
+        data = json.loads(aj.read_text())
+        for x in data["kept"]:
+            findings.append({"tool": f"aging-rules {data['rules_version']}", "source": "semgrep-aging",
+                             "rule": x["rule"], "level": x["severity"], "file": x["path"], "line": x["line"],
+                             "message": x["message"], "tags": [x["class"]], "category": "aging",
+                             "aging_class": x["class"]})
+    lj = out / "leakaudit.json"
+    if lj.exists():
+        for x in json.loads(lj.read_text()).get("findings", []):
+            findings.append({"tool": "LeakAudit", "source": "leakaudit", "rule": x.get("rule"),
+                             "level": x.get("severity"), "file": str(Path(x["file"]).relative_to(src))
+                             if x.get("file", "").startswith(str(src)) else x.get("file"),
+                             "line": x.get("line"), "message": x.get("message", "")[:500], "tags": [],
+                             "category": "resource-leak"})
     return findings
 
 
@@ -177,10 +232,12 @@ def analyze(app: dict, only: str) -> dict:
     t0 = time.time()
     if only in ("all", "paper"):
         run_codeql(app, src, out, log)
-        run_semgrep(app, src, out, log, SEMGREP_CONFIGS[app["language"]])
+        run_semgrep(app, src, out, log, SEMGREP_CONFIGS[app["language"]]
+                    + SEMGREP_FRAMEWORK_CONFIGS.get(app["framework"], []))
         run_slowql(app, src, out, log)
-    if only in ("all", "aging") and (AGING_RULES / app["language"]).is_dir():
-        run_semgrep(app, src, out, log, [("semgrep-aging", AGING_RULES / app["language"])])
+        run_leakaudit(app, src, out, log)
+    if only in ("all", "aging"):
+        run_aging(app, src, out, log)
     for f in out.glob("*.sarif"):  # fresh outputs: drop any stale .gz, then compress
         (out / (f.name + ".gz")).unlink(missing_ok=True)
     findings = collect(out, src)

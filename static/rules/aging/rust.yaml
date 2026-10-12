@@ -1,0 +1,150 @@
+# Aging rule set v1.0: Rust (Actix/Tokio). See TAXONOMY.md.
+rules:
+  # --------------------------------------------------------------------------------------- C1
+  - id: aging-rs-shared-map-growth
+    languages: [rust]
+    severity: WARNING
+    message: >-
+      Lock-guarded shared state grows (insert/push) and nothing in this file removes entries
+      (C1 memory/state retention). Check whether it is bounded (cap, TTL, eviction).
+    metadata:
+      aging:
+        class: C1
+        mechanism: cumulative resource retention
+        unless_file_matches: '\.(remove|retain|clear|drain|truncate|pop|pop_front|pop_back|swap_remove|split_off)\s*\('
+    pattern-either:
+      # direct use of the guard
+      - patterns:
+          - pattern-either:
+              - pattern: $S.lock().$UNWRAP(...).$GROW(...)
+              - pattern: $S.write().$UNWRAP(...).$GROW(...)
+              - pattern: $S.lock().await.$GROW(...)
+              - pattern: $S.write().await.$GROW(...)
+          - metavariable-regex:
+              metavariable: $GROW
+              regex: ^(insert|push|push_back|push_front|extend|entry)$
+      # guard bound to a variable first
+      - patterns:
+          # unwrap / expect / .await / match on the lock result: any initializer that takes the lock
+          - pattern-inside: |
+              let mut $G = $INIT;
+              ...
+          - metavariable-pattern:
+              metavariable: $INIT
+              pattern-either:
+                - pattern: $S.lock()
+                - pattern: $S.write()
+          - pattern-either:
+              - pattern: $G.insert(...)
+              - pattern: $G.push(...)
+              - pattern: $G.push_back(...)
+              - pattern: $G.extend(...)
+              - pattern: $G.entry(...)
+              - pattern: $G.$FIELD.insert(...)
+              - pattern: $G.$FIELD.push(...)
+
+  - id: aging-rs-explicit-leak
+    languages: [rust]
+    severity: WARNING
+    message: >-
+      Memory is intentionally leaked (C1): if this runs per request, the leaked allocations
+      accumulate for the process lifetime.
+    metadata:
+      aging: {class: C1, mechanism: cumulative resource retention}
+    pattern-either:
+      - pattern: Box::leak(...)
+      - pattern: std::mem::forget(...)
+      - pattern: mem::forget(...)
+      - pattern: String::leak(...)
+      - pattern: $V.leak()
+
+  # --------------------------------------------------------------------------------------- C2
+  - id: aging-rs-tempfile-without-cleanup
+    languages: [rust]
+    severity: WARNING
+    message: >-
+      Files are created in the temp directory (or a temp file is persisted) and nothing in this
+      file removes them (C2 storage growth).
+    metadata:
+      aging:
+        class: C2
+        mechanism: cumulative resource retention
+        unless_file_matches: '\bremove_file\s*\(|\bremove_dir_all\s*\(|\bremove_dir\s*\('
+    pattern-either:
+      - pattern: std::env::temp_dir()
+      - pattern: env::temp_dir()
+      - pattern: $T.keep()
+      - pattern: $T.persist(...)
+      - pattern: $T.into_path()
+
+  - id: aging-rs-insert-without-retention
+    languages: [rust]
+    severity: WARNING
+    message: >-
+      Records are inserted but nothing in this file ever deletes them (C2 persistent storage
+      growth). Check for a retention policy (TTL, cap per key, periodic cleanup).
+    metadata:
+      aging:
+        class: C2
+        mechanism: cumulative resource retention
+        unless_file_matches: '(?i)\bdelete\s+from\b|\btruncate\b'
+    patterns:
+      - pattern-either:
+          - pattern: $C.execute("$SQL", ...)
+          - pattern: $C.prepare("$SQL")
+          - pattern: sqlx::query("$SQL")
+          - pattern: sqlx::query_as::<$T>("$SQL")
+      - metavariable-regex:
+          metavariable: $SQL
+          regex: '(?is)^\s*(insert|replace)\b'
+
+  # --------------------------------------------------------------------------------------- C4
+  - id: aging-rs-command-without-timeout
+    languages: [rust]
+    severity: WARNING
+    message: >-
+      External command awaited without a timeout (C4 finite-resource exhaustion): a hung child
+      blocks this worker thread indefinitely.
+    metadata:
+      aging: {class: C4, mechanism: finite-resource exhaustion}
+    patterns:
+      - pattern-either:
+          - pattern: $CMD.output()
+          - pattern: $CMD.status()
+          - pattern: $CMD.output().await
+          - pattern: $CMD.status().await
+          - pattern: $CHILD.wait()
+          - pattern: $CHILD.wait_with_output()
+      - metavariable-pattern:
+          metavariable: $CMD
+          pattern-either:
+            - pattern: Command::new(...)
+            - pattern: std::process::Command::new(...)
+            - pattern: tokio::process::Command::new(...)
+            - pattern: $X.arg(...)
+            - pattern: $X.args(...)
+      - pattern-not-inside: tokio::time::timeout($D, $F)
+      - pattern-not-inside: timeout($D, $F)
+
+  - id: aging-rs-thread-per-call
+    languages: [rust]
+    severity: INFO
+    message: >-
+      Thread/task spawned inside a function and its handle discarded (C4): if this runs per
+      request, threads/tasks are neither joined nor bounded.
+    metadata:
+      aging: {class: C4, mechanism: finite-resource exhaustion}
+    patterns:
+      - pattern-inside: fn $F(...) { ... }
+      - pattern-either:
+          - pattern: std::thread::spawn(...);
+          - pattern: thread::spawn(...);
+          - pattern: tokio::spawn(...);
+          - pattern: tokio::task::spawn(...);
+          - pattern: tokio::task::spawn_blocking(...);
+          - pattern: actix_rt::spawn(...);
+          - pattern: actix_web::rt::spawn(...);
+      # handle kept (joined/awaited/aborted elsewhere)
+      - pattern-not-inside: let $H = $SPAWN;
+      - pattern-not-inside: let mut $H = $SPAWN;
+      - pattern-not-inside: $V.push($SPAWN)

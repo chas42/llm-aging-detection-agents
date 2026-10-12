@@ -1,0 +1,190 @@
+# Aging rule set v1.0: JavaScript (Node/Express). See TAXONOMY.md.
+rules:
+  # --------------------------------------------------------------------------------------- C1
+  - id: aging-js-global-collection-growth
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: >-
+      Module-level collection '$X' grows inside a function and nothing in this file removes
+      entries (C1 memory/state retention). Check whether it is bounded (cap, TTL, eviction).
+      [X=$X]
+    metadata:
+      aging:
+        class: C1
+        mechanism: cumulative resource retention
+        # $X declared at the start of a line (module level) as Map/Set/array/object
+        if_file_matches: '(?m)^(export\s+)?(const|let|var)\s+$X\s*(:[^=\n]+)?=\s*(new\s+(Map|Set)\s*\(|\[|\{)'
+        # removal, or a reset (indented reassignment = inside a function)
+        unless_file_matches: '\b$X\s*\.\s*(delete|clear|splice|shift|pop)\b|\bdelete\s+$X\s*[\[.]|(?m:^[ \t]+$X\s*=\s*(new\s|\[|\{))|\b$X\.length\s*=\s*0'
+    patterns:
+      - pattern-either:
+          - pattern-inside: function $F(...) { ... }
+          - pattern-inside: function (...) { ... }
+          - pattern-inside: (...) => { ... }
+          - pattern-inside: (...) => $BODY
+      - pattern-either:
+          - pattern: $X.set(...)
+          - pattern: $X.add(...)
+          - pattern: $X.push(...)
+          - pattern: $X.unshift(...)
+          - pattern: $X[$K] = $V
+          - pattern: $X[$K].push(...)
+
+  # --------------------------------------------------------------------------------------- C2
+  - id: aging-js-insert-without-retention
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: >-
+      Records are inserted but nothing in this file ever deletes them (C2 persistent storage
+      growth). Check for a retention policy (TTL, cap per key, periodic cleanup).
+    metadata:
+      aging:
+        class: C2
+        mechanism: cumulative resource retention
+        unless_file_matches: '(?i)\bdelete\s+from\b|\btruncate\b'
+    patterns:
+      - pattern-either:
+          - pattern: $DB.run("$SQL", ...)
+          - pattern: $DB.exec("$SQL", ...)
+          - pattern: $DB.prepare("$SQL", ...)
+          - pattern: $DB.query("$SQL", ...)
+          - pattern: $DB.execute("$SQL", ...)
+      - metavariable-regex:
+          metavariable: $SQL
+          regex: '(?is)^\s*(insert|replace)\b'
+
+  - id: aging-js-tempfile-without-cleanup
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: >-
+      Files are created in the temp directory and nothing in this file removes them (C2 storage
+      growth): every call can leave data behind.
+    metadata:
+      aging:
+        class: C2
+        mechanism: cumulative resource retention
+        unless_file_matches: '\.(unlink|unlinkSync|rm|rmSync|rmdir|rmdirSync)\s*\(|\brimraf\b|removeCallback|setGracefulCleanup'
+    pattern-either:
+      - pattern: $OS.tmpdir()
+      - pattern: $FS.mkdtemp(...)
+      - pattern: $FS.mkdtempSync(...)
+      - pattern: $FS.promises.mkdtemp(...)
+      - pattern: $TMP.fileSync(...)
+      - pattern: $TMP.dirSync(...)
+
+  # --------------------------------------------------------------------------------------- C4
+  - id: aging-js-interval-without-clear
+    languages: [javascript, typescript]
+    severity: INFO
+    message: >-
+      setInterval without any clearInterval in this file (C4): if the interval is created per
+      request/connection, timers and their closures accumulate.
+    metadata:
+      aging:
+        class: C4
+        mechanism: finite-resource exhaustion
+        unless_file_matches: '\bclearInterval\s*\('
+    pattern: setInterval(...)
+
+  - id: aging-js-listener-in-handler
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: >-
+      Event listener registered on a long-lived emitter inside a request handler (C4/C1): one
+      more listener (and closure) is retained on every request.
+    metadata:
+      aging: {class: C4, mechanism: cumulative resource retention}
+    patterns:
+      - pattern-either:
+          - pattern-inside: $APP.$METHOD($PATH, ..., ($REQ, $RES, ...) => { ... })
+          - pattern-inside: $APP.$METHOD($PATH, ..., function ($REQ, $RES, ...) { ... })
+          - pattern-inside: $APP.$METHOD($PATH, ..., async ($REQ, $RES, ...) => { ... })
+          - pattern-inside: $APP.$METHOD($PATH, ..., async function ($REQ, $RES, ...) { ... })
+      - metavariable-regex:
+          metavariable: $METHOD
+          regex: ^(get|post|put|patch|delete|all|use)$
+      - pattern-either:
+          - pattern: process.on(...)
+          - pattern: process.addListener(...)
+          - pattern: $APP.on(...)
+          - pattern: $APP.addListener(...)
+          - patterns:
+              - pattern-inside: |
+                  const $E = new EventEmitter(...);
+                  ...
+              - pattern-either:
+                  - pattern: $E.on(...)
+                  - pattern: $E.addListener(...)
+
+  - id: aging-js-child-process-without-timeout
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: >-
+      Child process started without a timeout (C4 finite-resource exhaustion): a hung command
+      keeps the process and its pipes alive and the request pending.
+    metadata:
+      aging:
+        class: C4
+        mechanism: finite-resource exhaustion
+        if_file_matches: 'child_process'
+    patterns:
+      - pattern-either:
+          - pattern: exec(...)
+          - pattern: execSync(...)
+          - pattern: execFile(...)
+          - pattern: execFileSync(...)
+          - pattern: spawn(...)
+          - pattern: spawnSync(...)
+          - patterns:
+              - pattern-either:
+                  - pattern: $CP.exec(...)
+                  - pattern: $CP.execSync(...)
+                  - pattern: $CP.execFile(...)
+                  - pattern: $CP.execFileSync(...)
+                  - pattern: $CP.spawn(...)
+                  - pattern: $CP.spawnSync(...)
+              - metavariable-regex:
+                  metavariable: $CP
+                  regex: ^(child_process|childProcess|cp|child)$
+      - pattern-not: '$F(..., {..., timeout: $T, ...}, ...)'
+      - pattern-not: '$O.$F(..., {..., timeout: $T, ...}, ...)'
+
+  - id: aging-js-fetch-without-timeout
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: >-
+      Outgoing HTTP request without a timeout/abort signal (C4 finite-resource exhaustion): a
+      slow peer keeps the request (and its socket) open indefinitely.
+    metadata:
+      aging: {class: C4, mechanism: finite-resource exhaustion}
+    pattern-either:
+      - patterns:
+          - pattern-either:
+              - pattern: fetch($URL)
+              - pattern: fetch($URL, $OPTS)
+          - pattern-not: 'fetch($URL, {..., signal: $S, ...})'
+      - patterns:
+          - pattern-either:
+              - pattern: axios.$M(...)
+              - pattern: axios(...)
+          - pattern-not: 'axios.$M(..., {..., timeout: $T, ...}, ...)'
+          - pattern-not: 'axios({..., timeout: $T, ...})'
+          - pattern-not: axios.create(...)
+
+  # --------------------------------------------------------------------------------------- C5
+  - id: aging-js-select-without-limit
+    languages: [javascript, typescript]
+    severity: INFO
+    message: >-
+      Query without LIMIT/pagination materialized in full (C5 unbounded work per request): its
+      cost grows with the stored state, amplifying any C1/C2 accumulation.
+    metadata:
+      aging: {class: C5, mechanism: amplifies cumulative retention}
+    patterns:
+      - pattern-either:
+          - pattern: $DB.all("$SQL", ...)
+          - pattern: $DB.prepare("$SQL", ...).all(...)
+          - pattern: $DB.query("$SQL", ...)
+      - metavariable-regex:
+          metavariable: $SQL
+          regex: '(?is)^\s*select\b(?!.*\blimit\b)(?!\s+count\s*\()'

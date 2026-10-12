@@ -1,0 +1,30 @@
+bax-django-credit-card             13 findings  {'codeql-community-audit': 3, 'codeql-community-default': 1, 'codeql-security-experimental': 1, 'semgrep-default': 2, 'semgrep-security-audit': 2, 'semgrep-aging': 4}
+bax-django-image-converter         13 findings  {'codeql-community-audit': 2, 'codeql-community-default': 1, 'codeql-quality-extended': 2, 'codeql-security-experimental': 2, 'codeql-security-quality': 3, 'semgrep-default': 2, 'semgrep-security-audit': 1}
+bax-django-monitor                 19 findings  {'codeql-community-audit': 3, 'codeql-community-default': 1, 'codeql-quality-extended': 3, 'codeql-security-experimental': 4, 'codeql-security-quality': 5, 'semgrep-default': 1, 'semgrep-security-audit': 1, 'semgrep-aging': 1}
+bax-django-uptime                  12 findings  {'codeql-community-audit': 2, 'codeql-community-default': 1, 'codeql-quality-extended': 1, 'codeql-security-experimental': 1, 'codeql-security-quality': 1, 'semgrep-default': 2, 'semgrep-security-audit': 2, 'semgrep-aging': 2}
+bax-flask-credit-card              27 findings  {'codeql-community-audit': 3, 'codeql-community-default': 1, 'codeql-quality-extended': 1, 'codeql-security-experimental': 1, 'semgrep-default': 2, 'semgrep-security-audit': 1, 'slowql': 16, 'semgrep-aging': 1, 'leakaudit': 1}
+bax-flask-image-converter           9 findings  {'codeql-community-audit': 3, 'codeql-security-experimental': 1, 'codeql-security-quality': 1, 'semgrep-default': 1, 'semgrep-security-audit': 1, 'semgrep-aging': 2}
+bax-flask-monitor                  11 findings  {'codeql-community-audit': 3, 'codeql-community-default': 1, 'codeql-quality-extended': 1, 'codeql-security-experimental': 2, 'codeql-security-quality': 1, 'semgrep-default': 1, 'semgrep-security-audit': 1, 'semgrep-aging': 1}
+bax-flask-uptime                   16 findings  {'codeql-community-audit': 2, 'codeql-quality-extended': 2, 'semgrep-default': 1, 'semgrep-security-audit': 1, 'slowql': 7, 'semgrep-aging': 2, 'leakaudit': 1}
+bax-aiohttp-credit-card            30 findings  {'codeql-quality-extended': 1, 'slowql': 28, 'leakaudit': 1}
+bax-aiohttp-image-converter         6 findings  {'codeql-quality-extended': 3, 'codeql-security-quality': 2, 'semgrep-aging': 1}
+bax-aiohttp-monitor                 8 findings  {'codeql-community-audit': 3, 'codeql-community-default': 1, 'codeql-security-experimental': 3, 'codeql-security-quality': 1}
+bax-fastapi-credit-card            25 findings  {'codeql-community-audit': 2, 'codeql-quality-extended': 4, 'semgrep-default': 1, 'slowql': 17, 'semgrep-aging': 1}
+bax-fastapi-image-converter        10 findings  {'codeql-community-audit': 2, 'codeql-quality-extended': 2, 'codeql-security-experimental': 2, 'codeql-security-quality': 4}
+bax-fastapi-monitor                20 findings  {'codeql-community-audit': 1, 'codeql-community-default': 3, 'codeql-quality-extended': 5, 'codeql-security-experimental': 5, 'codeql-security-quality': 6}
+bax-fastapi-uptime                 15 findings  {'codeql-community-audit': 2, 'codeql-security-experimental': 4, 'slowql': 7, 'semgrep-aging': 2}
+paper-flask-credit-card            10 findings  {'codeql-community-audit': 8, 'semgrep-default': 1, 'semgrep-security-audit': 1}
+paper-express-credit-card          31 findings  {'semgrep-default': 5, 'slowql': 23, 'semgrep-aging': 3}
+paper-actix-credit-card             0 findings  {}
+paper-flask-image-converter         7 findings  {'codeql-community-audit': 2, 'codeql-security-experimental': 1, 'codeql-security-quality': 1, 'semgrep-default': 1, 'semgrep-security-audit': 1, 'semgrep-aging': 1}
+paper-express-image-converter       4 findings  {'semgrep-default': 3, 'semgrep-aging': 1}  !! 1 command(s) failed, see run.json
+paper-actix-image-converter         1 findings  {'semgrep-aging': 1}
+paper-flask-monitor                13 findings  {'codeql-community-audit': 1, 'codeql-community-default': 2, 'codeql-quality-extended': 1, 'codeql-security-experimental': 2, 'codeql-security-quality': 3, 'semgrep-default': 2, 'semgrep-security-audit': 2}
+paper-express-monitor               7 findings  {'codeql-security-quality': 3, 'semgrep-default': 3, 'semgrep-aging': 1}
+paper-actix-monitor                 0 findings  {}
+paper-flask-uptime                 15 findings  {'codeql-community-audit': 2, 'codeql-quality-extended': 1, 'codeql-security-quality': 1, 'semgrep-default': 1, 'semgrep-security-audit': 1, 'slowql': 6, 'semgrep-aging': 2, 'leakaudit': 1}
+paper-express-uptime                2 findings  {'semgrep-aging': 2}  !! 1 command(s) failed, see run.json
+paper-actix-uptime                  1 findings  {'semgrep-aging': 1}
+os-fastapi-uptime                   5 findings  {'codeql-community-audit': 4, 'codeql-quality-extended': 1}
+os-fastapi-monitor                  4 findings  {'codeql-community-audit': 1, 'codeql-quality-extended': 1, 'codeql-security-experimental': 1, 'codeql-security-quality': 1}
+os-flask-image-converter           12 findings  {'codeql-quality-extended': 2, 'codeql-security-experimental': 2, 'codeql-security-quality': 4, 'semgrep-default': 2, 'semgrep-security-audit': 2}

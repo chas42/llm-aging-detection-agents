@@ -1,0 +1,286 @@
+# Aging rule set v1.0: Python. See TAXONOMY.md (classes C1-C5, protocol, file-level conditions).
+rules:
+  # --------------------------------------------------------------------------------------- C1
+  - id: aging-py-global-collection-growth
+    languages: [python]
+    severity: WARNING
+    message: >-
+      Module-level collection '$X' grows inside a function and nothing in this file removes
+      entries (C1 memory/state retention). Check whether it is bounded (cap, TTL, eviction).
+      [X=$X]
+    metadata:
+      aging:
+        class: C1
+        mechanism: cumulative resource retention
+        # $X must be a module-level collection (an unbounded deque counts; deque(maxlen=N) does not)
+        if_file_matches: '(?m)^$X\s*(:[^=\n]+)?=\s*(\{|\[|set\(|dict\(|list\(|(collections\.)?(defaultdict|OrderedDict|Counter)\(|(collections\.)?deque\((?![^)\n]*maxlen))'
+        unless_file_matches: '\b$X\s*\.\s*(pop|popitem|popleft|remove|discard|clear)\b|\bdel\s+$X\s*\['
+    patterns:
+      - pattern-either:
+          - pattern-inside: |
+              def $F(...):
+                ...
+          - pattern-inside: |
+              async def $F(...):
+                ...
+      # an assignment of $X inside the same function makes it a local variable
+      - pattern-not-inside: |
+          def $G(...):
+            ...
+            $X = $ANY
+            ...
+      - pattern-not-inside: |
+          async def $G(...):
+            ...
+            $X = $ANY
+            ...
+      - pattern-either:
+          - pattern: $X[$K] = $V
+          - pattern: $X[$K] += $V
+          - pattern: $X.append(...)
+          - pattern: $X.appendleft(...)
+          - pattern: $X.extend(...)
+          - pattern: $X.add(...)
+          - pattern: $X.update(...)
+          - pattern: $X.setdefault(...)
+          - pattern: $X[$K].append(...)
+          - pattern: $X[$K].add(...)
+
+  - id: aging-py-unbounded-cache
+    languages: [python]
+    severity: WARNING
+    message: >-
+      Unbounded memoization cache on '$F' (C1 memory retention): one entry per distinct argument
+      tuple is kept for the process lifetime. Consider lru_cache(maxsize=N) or a TTL cache.
+    metadata:
+      aging: {class: C1, mechanism: cumulative resource retention}
+    pattern-either:
+      - pattern: |
+          @functools.cache
+          def $F(...):
+            ...
+      - pattern: |
+          @functools.lru_cache(maxsize=None)
+          def $F(...):
+            ...
+      - pattern: |
+          @functools.lru_cache(None)
+          def $F(...):
+            ...
+
+  # --------------------------------------------------------------------------------------- C2
+  - id: aging-py-insert-without-retention
+    languages: [python]
+    severity: WARNING
+    message: >-
+      Records are inserted but nothing in this file ever deletes them (C2 persistent storage
+      growth). Check for a retention policy (TTL, cap per key, periodic cleanup).
+    metadata:
+      aging: {class: C2, mechanism: cumulative resource retention,
+              unless_file_matches: '(?i)\bdelete\s+from\b|\btruncate\b|\.delete\s*\('}
+    pattern-either:
+      - patterns:
+          - pattern-either:
+              - pattern: $C.execute("$SQL", ...)
+              - pattern: $C.executemany("$SQL", ...)
+              - pattern: $C.executescript("$SQL")
+          - metavariable-regex:
+              metavariable: $SQL
+              regex: '(?is)^\s*(insert|replace)\b'
+      - pattern: $M.objects.create(...)
+      - pattern: $M.objects.get_or_create(...)
+      - pattern: $M.objects.update_or_create(...)
+      - pattern: $M.objects.bulk_create(...)
+
+  - id: aging-py-tempfile-without-cleanup
+    languages: [python]
+    severity: WARNING
+    message: >-
+      Temporary file/directory created without automatic deletion and nothing in this file
+      removes files (C2 storage growth): every call can leave data behind in the temp dir.
+    metadata:
+      aging: {class: C2, mechanism: cumulative resource retention,
+              unless_file_matches: '\bos\.(remove|unlink|rmdir)\s*\(|\bshutil\.rmtree\s*\(|\.unlink\s*\(|\.rmdir\s*\('}
+    pattern-either:
+      - pattern: tempfile.mkstemp(...)
+      - pattern: tempfile.mkdtemp(...)
+      - pattern: tempfile.mktemp(...)
+      - pattern: tempfile.NamedTemporaryFile(..., delete=False, ...)
+
+  # --------------------------------------------------------------------------------------- C4
+  - id: aging-py-http-without-timeout
+    languages: [python]
+    severity: WARNING
+    message: >-
+      Outgoing HTTP call without a timeout (C4 finite-resource exhaustion): a slow or hung peer
+      blocks this worker indefinitely, and repeated hangs exhaust the worker pool.
+    metadata:
+      aging: {class: C4, mechanism: finite-resource exhaustion}
+    pattern-either:
+      - patterns:
+          - pattern: requests.$M(...)
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^(get|post|put|patch|delete|head|options|request)$
+          - pattern-not: requests.$M(..., timeout=$T, ...)
+      - patterns:
+          - pattern: urllib.request.urlopen(...)
+          - pattern-not: urllib.request.urlopen(..., timeout=$T, ...)
+          - pattern-not: urllib.request.urlopen($U, $D, $T, ...)
+      - pattern: httpx.$M(..., timeout=None, ...)
+      - pattern: httpx.Client(..., timeout=None, ...)
+      - pattern: httpx.AsyncClient(..., timeout=None, ...)
+
+  - id: aging-py-subprocess-without-timeout
+    languages: [python]
+    severity: WARNING
+    message: >-
+      External process awaited without a timeout (C4 finite-resource exhaustion): if the child
+      hangs, this worker (and the child) are held forever.
+    metadata:
+      aging: {class: C4, mechanism: finite-resource exhaustion}
+    pattern-either:
+      - patterns:
+          - pattern-either:
+              - pattern: subprocess.run(...)
+              - pattern: subprocess.call(...)
+              - pattern: subprocess.check_call(...)
+              - pattern: subprocess.check_output(...)
+              - pattern: subprocess.getoutput(...)
+              - pattern: subprocess.getstatusoutput(...)
+          - pattern-not: subprocess.$F(..., timeout=$T, ...)
+      - pattern: os.popen(...)
+      - pattern: os.system(...)
+      - patterns:
+          - pattern-inside: |
+              $P = subprocess.Popen(...)
+              ...
+          - pattern-either:
+              - pattern: $P.communicate(...)
+              - pattern: $P.wait(...)
+          - pattern-not: $P.communicate(..., timeout=$T, ...)
+          - pattern-not: $P.wait(timeout=$T)
+          - pattern-not: $P.wait($T)
+      - patterns:
+          - pattern-inside: |
+              $P = await asyncio.create_subprocess_exec(...)
+              ...
+          - pattern-either:
+              - pattern: await $P.communicate(...)
+              - pattern: await $P.wait()
+          - pattern-not-inside: await asyncio.wait_for(...)
+      - patterns:
+          - pattern-inside: |
+              $P = await asyncio.create_subprocess_shell(...)
+              ...
+          - pattern-either:
+              - pattern: await $P.communicate(...)
+              - pattern: await $P.wait()
+          - pattern-not-inside: await asyncio.wait_for(...)
+
+  - id: aging-py-executor-per-call
+    languages: [python]
+    severity: INFO
+    message: >-
+      Thread/process pool or thread created inside a function and not managed by 'with'
+      (C4 finite-resource exhaustion): if this function runs per request, threads/processes
+      accumulate.
+    metadata:
+      aging: {class: C4, mechanism: finite-resource exhaustion}
+    patterns:
+      - pattern-either:
+          - pattern-inside: |
+              def $F(...):
+                ...
+          - pattern-inside: |
+              async def $F(...):
+                ...
+      - pattern-either:
+          - pattern: concurrent.futures.ThreadPoolExecutor(...)
+          - pattern: concurrent.futures.ProcessPoolExecutor(...)
+          - pattern: multiprocessing.Pool(...)
+          - pattern: multiprocessing.pool.ThreadPool(...)
+          - pattern: threading.Thread(...)
+          - pattern: multiprocessing.Process(...)
+      - pattern-not-inside: |
+          with $E as $V:
+            ...
+      - pattern-not-inside: |
+          with $E:
+            ...
+
+  - id: aging-py-fire-and-forget-task
+    languages: [python]
+    severity: INFO
+    message: >-
+      Background task created and its reference discarded (C4): tasks are neither awaited,
+      cancelled nor bounded, so a burst of requests can accumulate pending tasks.
+    metadata:
+      aging: {class: C4, mechanism: finite-resource exhaustion}
+    patterns:
+      - pattern-either:
+          - pattern: asyncio.create_task(...)
+          - pattern: asyncio.ensure_future(...)
+          - pattern: $LOOP.create_task(...)
+          - pattern: $LOOP.run_in_executor(...)
+      - pattern-not-inside: $V = $CALL
+      - pattern-not-inside: await $CALL
+      - pattern-not-inside: return $CALL
+      - pattern-not-inside: $C.add(...)
+      - pattern-not-inside: $C.append(...)
+      - pattern-not-inside: asyncio.gather(...)
+      - pattern-not-inside: asyncio.wait(...)
+
+  # --------------------------------------------------------------------------------------- C5
+  - id: aging-py-select-without-limit
+    languages: [python]
+    severity: INFO
+    message: >-
+      Query without LIMIT/pagination materialized in full (C5 unbounded work per request): its
+      cost grows with the stored state, amplifying any C1/C2 accumulation.
+    metadata:
+      aging: {class: C5, mechanism: amplifies cumulative retention}
+    pattern-either:
+      - patterns:
+          - pattern-either:
+              - pattern: $C.execute("$SQL", ...).fetchall()
+              - pattern: |
+                  $R = $C.execute("$SQL", ...)
+                  ...
+                  $R.fetchall()
+              - pattern: |
+                  $C.execute("$SQL", ...)
+                  ...
+                  $C.fetchall()
+              - pattern: |
+                  $R = await $C.execute("$SQL", ...)
+                  ...
+                  await $R.fetchall()
+              - pattern: |
+                  async with $C.execute("$SQL", ...) as $R:
+                    ...
+                    await $R.fetchall()
+              - pattern: |
+                  $C.execute("$SQL", ...)
+                  ...
+                  await $C.fetchall()
+          - metavariable-regex:
+              metavariable: $SQL
+              regex: '(?is)^\s*select\b(?!.*\blimit\b)'
+      - patterns:
+          - pattern-either:
+              - pattern: $M.objects.all()
+              - pattern: $M.objects.filter(...)
+          # bounded by slicing or by a chained call that returns one row / a scalar
+          - pattern-not-inside: $Q[:$N]
+          - pattern-not-inside: $Q[$A:$N]
+          - pattern-not-inside: $Q.first()
+          - pattern-not-inside: $Q.last()
+          - pattern-not-inside: $Q.get(...)
+          - pattern-not-inside: $Q.count()
+          - pattern-not-inside: $Q.exists()
+          - pattern-not-inside: $Q.delete()
+          - pattern-not-inside: $Q.update(...)
+          - pattern-not-inside: $Q.aggregate(...)
+          - pattern-not-inside: $Q.earliest(...)
+          - pattern-not-inside: $Q.latest(...)

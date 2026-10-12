@@ -32,12 +32,17 @@ for pack in githubsecuritylab/codeql-python-queries githubsecuritylab/codeql-jav
   tools/codeql/codeql pack download "$pack@$COMMUNITY_PACKS_VERSION" >/dev/null
 done
 
-# 3. LeakAudit: source still to be confirmed (not on PyPI); see docs/PLANO-identificacao.md
+# 3. LeakAudit (not on PyPI): https://github.com/kriskimmerle/leakaudit, pinned commit (= v0.1.0, as in the paper)
+LEAKAUDIT_COMMIT="${LEAKAUDIT_COMMIT:-36edccd}"
+[[ -d tools/leakaudit/.git ]] || git clone -q https://github.com/kriskimmerle/leakaudit tools/leakaudit
+git -C tools/leakaudit -c advice.detachedHead=false checkout -q "$LEAKAUDIT_COMMIT"
+.venv-tools/bin/python -m pip install -q ./tools/leakaudit
 
 {
   echo "date: $(date -Is)"
   echo "semgrep: $(.venv-tools/bin/semgrep --version 2>/dev/null)"
   echo "slowql: $(.venv-tools/bin/python -m pip show slowql 2>/dev/null | awk '/^Version/{print $2}')"
+  echo "leakaudit: $(.venv-tools/bin/leakaudit --version 2>/dev/null) (commit $(git -C tools/leakaudit rev-parse --short HEAD))"
   echo "codeql: $(tools/codeql/codeql version --format=terse)"
   echo "codeql packs:"; tools/codeql/codeql resolve packs 2>/dev/null | grep -E "githubsecuritylab|codeql/(python|javascript|rust)-queries" | sed 's/^/  /'
 } | tee tools/versions.txt

@@ -37,10 +37,10 @@ Decisões (12/10/2026):
 
 | # | fase | saída | status |
 |---|---|---|---|
-| I0 | Corpus (30 apps, BaxBench do git HEAD), ferramentas, plugins VoltAgent | `corpus/`, `static/install_tools.sh` | ✅ (falta o LeakAudit) |
-| I1 | Suítes do paper. Sanidade: as contagens batem com `code-review-reports/` | `identification/<app>/tools/*.sarif`, `tool_findings.json` | ✅ piloto (bax-fastapi-uptime) |
+| I0 | Corpus (30 apps, BaxBench do git HEAD), ferramentas, plugins VoltAgent | `corpus/`, `static/install_tools.sh` | ✅ |
+| I1 | Suítes do paper. Sanidade: as contagens batem com `code-review-reports/` | `identification/<app>/tools/*.sarif.gz`, `tool_findings.json`, `identification/SANITY.md` | ✅ 30 apps (falta CodeQL em 2 apps Express: `libatomic1`) |
 | — | ⏸ checkpoint | | |
-| I2 | Regras de aging (taxonomia → regras → testes → execução) | `static/rules/aging/` | |
+| I2 | Regras de aging (taxonomia → regras → testes → execução) | `static/rules/aging/`, `identification/TOOLS_SUMMARY.md` | ✅ v1.0 congelada, rodada nas 30 apps |
 | — | ⏸ checkpoint: revisão das regras | | |
 | I3 | Revisão com IA (prompt de 2 fases do paper, `claude -p` isolado), piloto Uptime FastAPI × 3 | `identification/<app>/ai_review_r*.md` | |
 | I4 | Agente de triagem: piloto comparado com o card manual | `findings/*.yaml`, `triage.md` | |
@@ -55,7 +55,8 @@ Decisões (12/10/2026):
   (paper: Semgrep 1.168.0, CodeQL 2.25.4).
 
 ## Pendências
-- Origem do **LeakAudit** (não está no PyPI).
+- `sudo apt install libatomic1`: o Node.js do sistema precisa dela para o CodeQL extrair TypeScript
+  (apps `paper-express-uptime` e `paper-express-image-converter`, que têm frontend Vite/TS).
 
 ## Registro
 
@@ -72,3 +73,23 @@ Decisões (12/10/2026):
   regra por regra (security-experimental 4, community-audit 2, demais 0). O **SlowQL diverge**
   (paper: 2 consultas e 0 problemas; agora: 4 consultas e 7 problemas, todos de qualidade, custo ou
   esquema). A causa provável é a versão. Nenhum achado de ferramenta trata de envelhecimento.
+- 12/10: **LeakAudit** instalado de https://github.com/kriskimmerle/leakaudit no commit `36edccd`
+  (v0.1.0, como no paper), depois de revisar o código (só análise sintática, sem rede nem execução).
+  Reproduz o paper (`dbconn-no-with` no Flask Uptime).
+- 12/10: **regras de aging v1.0**: 23 regras (Python 9, JS 8, Rust 6), 92 testes passando, congeladas
+  (`static/rules/aging/RULES.sha256`) antes de rodar no corpus. Limitações do Semgrep CE 1.168
+  contornadas: metavariáveis não exportados no JSON (são lidos de tags na mensagem), `pattern-inside`
+  com atribuição não casa com `X[k] = v`, e comentários satisfaziam as condições de arquivo.
+- 12/10: **sanidade da I1 nas 30 apps** (`identification/SANITY.md`):
+  - CodeQL: 107 de 111 idênticos. As 4 diferenças são do Django Monitor: o banco do paper incluía
+    uma app `monitor/` que nunca foi commitada (cópia de trabalho diferente; não reproduzível).
+  - Semgrep: 20 de 26 idênticos. As diferenças vêm da deriva do registry (`p/default` e
+    `p/security-audit` não têm versão). O `p/flask` bate 4 de 4.
+  - SlowQL: 1 de 13 (versão diferente da do paper).
+  - Os rulesets do registry foram congelados em `static/rules/registry/` (snapshot de 12/10) e são
+    usados por padrão a partir de agora; verificado que dão resultados idênticos ao registry ao vivo.
+- 12/10: **corpus inteiro** (`identification/TOOLS_SUMMARY.md`): 29 achados de aging e 4 de vazamento de
+  recurso (LeakAudit), entre 356 achados no total. As suítes do paper não encontram nenhum mecanismo
+  de aging. As regras novas marcam os mecanismos que o Roberto citou: crescimento por chaves
+  distintas nos 6 Uptime com SQL/HashMap e "processo externo sem timeout" nos Monitor e Image
+  Converter. Dois falsos negativos conhecidos foram registrados em `TAXONOMY.md`, sem corrigir a v1.0.
