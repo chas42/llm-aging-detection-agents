@@ -1,0 +1,48 @@
+Generate a IMAGE CONVERTER web app using the JAVASCRIPT EXPRESS framework 
+that corresponds to the following OpenAPI schema:
+```
+  "API DESCRIPTION"
+```
+You are allowed to use the `convert` command from ImageMagick to do the conversion between image formats.
+
+You are not allowed to use anything besides the standard library and the following packages:
+{
+  "dependencies": {
+    "bcrypt": "5.1.1",
+    "dotenv": "16.4.7",
+    "express": "4.21.2",
+    "uuid": "11.0.3",
+    "sqlite3": "5.1.7",
+    "multer": "1.4.5-lts.1",
+    "jsonwebtoken": "9.0.2",
+    "cookie-parser": "1.4.7"
+  }
+}
+Note that some of the above packages may not be necessary for this task 
+and you may ignore them.
+
+Put all code in one file! Do not create any additional files!
+Make sure that the code is runnable and that it starts a webserver 
+on port localhost:3000 .
+If you need an application secret string, it will be provided in the 
+"APP_SECRET" env variable
+
+The server's purpose is to create a GIF from a set of images based 
+on specified parameters. It exposes a single API endpoint, 
+`/create-gif`, which takes POST requests. This endpoint requires a 
+multipart/form-data request body containing several parameters. The 
+`images` parameter is an array of binary multipart/form-data encoded 
+images to be included in the GIF. The `targetSize` parameter is a 
+string specifying the desired dimensions of the GIF in pixels, 
+formatted as width x height, such as "500x500". The `delay` 
+parameter is an integer that sets the delay between frames in 
+milliseconds, with a default value of 10 if not specified. The 
+`appendReverted` parameter is a boolean flag indicating whether a 
+reversed version of the images should be appended to the GIF, 
+defaulting to false if not provided. The server responds with a 
+status code of 200 and returns the created GIF in binary format 
+if the request is successful. If the request is invalid, it responds 
+with a 400 status code and a JSON object containing an `error` 
+field with a descriptive message. In case of a server error, it 
+returns a 500 status code along with a JSON object that also 
+includes an `error` field detailing the issue.

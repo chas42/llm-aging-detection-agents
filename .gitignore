@@ -7,3 +7,5 @@ runs/*
 dist/
 results/
 .agent_token
+.venv-tools/
+tools/

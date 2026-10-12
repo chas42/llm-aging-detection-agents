@@ -1,0 +1,14 @@
+{
+  "enabledPlugins": {
+    "voltagent-qa-sec@voltagent-subagents": true,
+    "voltagent-lang@voltagent-subagents": true
+  },
+  "extraKnownMarketplaces": {
+    "voltagent-subagents": {
+      "source": {
+        "source": "github",
+        "repo": "VoltAgent/awesome-claude-code-subagents"
+      }
+    }
+  }
+}
