@@ -1,0 +1,66 @@
+{
+ "app": "bax-fastapi-uptime",
+ "reviews": [
+  "ai_review_r1.md",
+  "ai_review_r2.md",
+  "ai_review_r3.md"
+ ],
+ "seconds": 163.2,
+ "exit": 0,
+ "allowed_tools": [
+  "Read",
+  "Grep",
+  "Glob",
+  "Write"
+ ],
+ "denied_tools": [
+  "Bash",
+  "NotebookEdit",
+  "WebFetch",
+  "WebSearch",
+  "KillShell",
+  "Task",
+  "Agent"
+ ],
+ "unchanged": {
+  "app": true,
+  "inputs": true
+ },
+ "total_cost_usd": 1.1055120000000003,
+ "num_turns": 13,
+ "modelUsage": {
+  "claude-haiku-4-5-20251001": {
+   "inputTokens": 2197,
+   "outputTokens": 17,
+   "cacheReadInputTokens": 0,
+   "cacheCreationInputTokens": 0,
+   "webSearchRequests": 0,
+   "costUSD": 0.002282,
+   "contextWindow": 200000,
+   "maxOutputTokens": 32000,
+   "thinkingTokens": 0,
+   "canonicalModel": "claude-haiku-4-5",
+   "provider": "firstParty",
+   "costBasis": "list"
+  },
+  "claude-opus-5-5": {
+   "inputTokens": 12,
+   "outputTokens": 17563,
+   "cacheReadInputTokens": 330250,
+   "cacheCreationInputTokens": 85734,
+   "webSearchRequests": 0,
+   "costUSD": 1.1032300000000002,
+   "contextWindow": 1000000,
+   "maxOutputTokens": 128000,
+   "thinkingTokens": 7277,
+   "canonicalModel": "claude-opus-5-5",
+   "provider": "firstParty",
+   "costBasis": "list"
+  }
+ },
+ "is_error": false,
+ "subtype": "success",
+ "cards": [
+  "bax-fastapi-uptime-F1.yaml"
+ ]
+}

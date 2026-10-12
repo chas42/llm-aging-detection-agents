@@ -1,0 +1,44 @@
+# Finding card schema (blank template). Every field is required unless marked optional.
+# The cards produced by the triage agent and the manual ones follow this structure, so that the
+# validation pipeline (instrumentation -> workload -> judge -> repair) can consume either.
+
+id: <app-id>-F<n>                 # e.g. bax-fastapi-uptime-F1
+app: corpus/<app-id>/src          # code location
+entrypoint: <module:object>       # ASGI/WSGI target or start command, if known (optional)
+source_report: <file(s) the finding came from>
+source_findings: [<ids in the source reports, e.g. "r1:CR-4", "r2:FA-1">]
+provenance:                       # who found it (triage fills this; at least one entry)
+  ai_reviews: [<"r1:Finding 4", ...>]          # repetitions whose final report contains it
+  tools: [<"semgrep-aging:aging-py-...", "leakaudit:dbconn-no-with", ...>]
+classification: supported         # supported | conditional | non-aging | unsupported
+
+mechanism:
+  summary: <2-4 sentences: what accumulates or is exhausted, on which path, and why it is unbounded>
+  resource: <the resource that accumulates / is exhausted>
+  trigger: <what the workload or environment must do for the resource to grow>
+  gap: <the missing bound / cleanup / timeout>
+  suspect_code:
+    - function: <name>            # plus file and lines when useful
+      file: <path>
+      lines: <a-b>
+
+aging_elements:                   # the four required elements, each with direct code evidence
+  repeatable_trigger: <evidence or "missing: ...">
+  accumulation_or_exhaustion: <evidence or "missing: ...">
+  insufficient_bounding: <evidence or "missing: ...">
+  plausible_degradation: <evidence or "missing: ...">
+
+controllability:
+  level: workload                 # workload | environment | uncontrollable
+  notes: <what must be controlled to trigger it (key diversity, external hang, restarts, runtime...)>
+
+activation_criteria:
+  path_executed: <what instrumentation must show>
+  resource_growth: <which gauge must grow, and how much>
+  control_contrast: <what must NOT happen under a control workload>
+
+expected_symptoms:                # ordered by likelihood
+  - <metric and direction, e.g. "client latency of POST /x increases">
+
+priority: <1-5>                   # 1 = validate first (supported + workload-controllable)
+stability: <"3/3 reviews", "tools only", ...>   # filled by triage from the repetitions

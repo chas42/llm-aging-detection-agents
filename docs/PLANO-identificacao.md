@@ -42,10 +42,19 @@ Decisões (12/10/2026):
 | — | ⏸ checkpoint | | |
 | I2 | Regras de aging (taxonomia → regras → testes → execução) | `static/rules/aging/`, `identification/TOOLS_SUMMARY.md` | ✅ v1.0 congelada, rodada nas 30 apps |
 | — | ⏸ checkpoint: revisão das regras | | |
-| I3 | Revisão com IA (prompt de 2 fases do paper, `claude -p` isolado), piloto Uptime FastAPI × 3 | `identification/<app>/ai_review_r*.md` | |
-| I4 | Agente de triagem: piloto comparado com o card manual | `findings/*.yaml`, `triage.md` | |
+| I3 | Revisão com IA (prompt de 2 fases do paper, `claude -p` isolado), piloto Uptime FastAPI × 3 | `identification/<app>/ai_review_r*.md` | ✅ piloto: 3 repetições válidas (~US$ 1 cada, uso estimado) |
+| I4 | Agente de triagem: piloto comparado com o card manual | `identification/<app>/triage/`, `COMPARISON.md` | ✅ piloto: 1 card, igual ao manual no mecanismo; classificação conditional |
 | — | ⏸ checkpoint | | |
 | I5 | Expandir para as 30 apps e consolidar a contribuição de cada fonte | `identification/REPORT.md` | |
+
+## Uso da conta (importante)
+
+As revisões e a triagem rodam como sessões do Claude Code (`claude -p`) com a **conta do claude.ai**
+logada nesta máquina, sem chave de API. O `total_cost_usd` registrado nos JSONs é uma **estimativa
+equivalente em preço de API**, não uma cobrança: o uso consome o **limite do plano** (o mesmo das
+conversas). Rodar muitas apps de uma vez pode esgotar o limite por algumas horas, por isso a
+expansão deve ser feita em **lotes aprovados**. Referência do piloto: ~1 por revisão e ~1 por
+triagem; 30 apps × (3 revisões + triagem) ≈ 120.
 
 ## Ameaças à validade (para registrar no paper)
 - As regras de aging foram escritas por quem conhece o corpus. Mitigação: derivar da literatura
@@ -93,3 +102,12 @@ Decisões (12/10/2026):
   de aging. As regras novas marcam os mecanismos que o Roberto citou: crescimento por chaves
   distintas nos 6 Uptime com SQL/HashMap e "processo externo sem timeout" nos Monitor e Image
   Converter. Dois falsos negativos conhecidos foram registrados em `TAXONOMY.md`, sem corrigir a v1.0.
+- 12/10: **I3 piloto (bax-fastapi-uptime)**. A 1ª tentativa falhou porque plugins do escopo de projeto
+  não carregam fora da pasta do projeto. Correção: `--plugin-dir` com o cache local, mais validação
+  estrutural da saída. 3 repetições válidas (uso estimado equivalente a US$ 0,92–1,04 em API, ~3 min cada). O mecanismo principal
+  aparece 3/3, com veredicto oscilando (1 supported, 2 conditional).
+- 12/10: **I4 piloto**. A triagem isolada (uso estimado equivalente a US$ 1,11) gerou 1 card que coincide com o manual no
+  mecanismo, gatilho, código, controlabilidade e sintomas. Classificou como *conditional* (o manual,
+  seguindo o paper, diz supported). Ela também propôs por conta própria o controle pareado (mesma
+  taxa, chaves fixas) e apontou o plano de execução do SELECT como variável a registrar. Detalhes em
+  `identification/bax-fastapi-uptime/COMPARISON.md`.

@@ -1,0 +1,150 @@
+id: bax-fastapi-uptime-F1
+app: corpus/bax-fastapi-uptime/src
+entrypoint: "app:app (uvicorn, single process; `python app.py` serves 0.0.0.0:5000). DB_PATH 'db.sqlite3' is resolved against the process cwd."
+source_report: "inputs/ai_review_r1.md, inputs/ai_review_r2.md, inputs/ai_review_r3.md, inputs/tool_findings.json"
+source_findings:
+  - "r1:F1"
+  - "r1:F3"
+  - "r1:CR-3"
+  - "r1:CR-4"
+  - "r1:FA-2"
+  - "r1:FA-5"
+  - "r2:F1"
+  - "r2:SELF-SOURCED-1"
+  - "r2:CR-2"
+  - "r2:FA-2"
+  - "r3:F2"
+  - "r3:F6 (unbounded serviceId/token length part only)"
+  - "r3:CR-3"
+  - "r3:CR-4"
+  - "r3:FA-3"
+  - "r3:FA-6 (length part only)"
+  - "semgrep-aging:aging-py-insert-without-retention (app.py:50)"
+  - "semgrep-aging:aging-py-select-without-limit (app.py:68)"
+  - "slowql:PERF-SCAN-003 (app.py:69)"
+provenance:
+  ai_reviews:
+    - "r1:Finding 1"
+    - "r1:Finding 3"
+    - "r2:Finding 1"
+    - "r2:SELF-SOURCED 1"
+    - "r3:Finding 2"
+    - "r3:Finding 6 (aggravator: unbounded field length)"
+  tools:
+    - "semgrep-aging:aging-py-insert-without-retention"
+    - "semgrep-aging:aging-py-select-without-limit"
+    - "slowql:PERF-SCAN-003"
+classification: conditional
+
+mechanism:
+  summary: >-
+    Every POST /heartbeat with a (serviceId, token) pair not seen before inserts a permanent row
+    into `heartbeats`, plus entries in the PK autoindex and idx_heartbeats_token. No code path
+    deletes, expires or caps rows, and serviceId/token have no length limit. On the read side,
+    POST /services fetches every row for a token with no LIMIT. It does so while holding the
+    process-wide `_db_lock`, then builds and serializes one ServiceOut per row. Per-request
+    /services cost therefore grows with the rows accumulated under that token, and heartbeat
+    writes queue behind it on the same lock. These are the write side and read side of one causal
+    chain, and one workload validates both, so they are merged here.
+  resource: >-
+    Rows in the SQLite table `heartbeats` and its two B-tree indexes (db.sqlite3 file size or
+    page_count). Downstream, these drive per-request /services work: fetchall list,
+    ServiceOut list, JSON body, and `_db_lock` hold time.
+  trigger: >-
+    A sustained stream of POST /heartbeat requests with previously unseen (serviceId, token)
+    pairs, for example service churn, per-run IDs or rotating tokens. For the read-side
+    degradation, many distinct serviceIds must arrive under the SAME token, and POST /services
+    must be polled for that token.
+  gap: >-
+    There is no DELETE, TTL, retention job or per-token cap anywhere in app.py. The upsert
+    de-duplicates only identical pairs. There is no max_length on serviceId or token. The SELECT
+    has no LIMIT or pagination, and fetchall() runs under `_db_lock`.
+  suspect_code:
+    - function: upsert_heartbeat
+      file: app.py
+      lines: 46-61
+    - function: list_services_for_token
+      file: app.py
+      lines: 64-79
+    - function: services
+      file: app.py
+      lines: 152-172
+    - function: HeartbeatIn
+      file: app.py
+      lines: 82-87
+    - function: init_db
+      file: app.py
+      lines: 28-40
+
+aging_elements:
+  repeatable_trigger: >-
+    POST /heartbeat (lines 124-134) calls upsert_heartbeat on every request. An unseen pair takes
+    the INSERT branch of `INSERT ... ON CONFLICT(service_id, token) DO UPDATE` (lines 52-55). The
+    serviceId and token values are arbitrary client strings (lines 83-87), and the only
+    validation is non-empty (lines 128-131). Any HTTP client can repeat the trigger. Condition:
+    the pair must be new each time. A fixed set of pairs only updates rows in place.
+  accumulation_or_exhaustion: >-
+    Each new pair adds one row in the table, one entry in the (service_id, token) PK autoindex
+    and one entry in idx_heartbeats_token (lines 30-39). conn.commit() makes it durable (line
+    59). The data persists on disk across requests and across process restarts. Rows per token
+    feed straight into cur.fetchall() (line 77) and the per-row ServiceOut loop (lines 160-167).
+  insufficient_bounding: >-
+    No statement in the file deletes or expires rows. The only SQL is CREATE TABLE/INDEX, the
+    upsert and the SELECT. ON CONFLICT bounds rows per pair only, not the number of pairs.
+    HeartbeatIn/ServicesIn set no max_length (lines 82-95). The SELECT (lines 68-76) has no LIMIT,
+    and `_db_lock` has no timeout (line 17, lines 47 and 65).
+  plausible_degradation: >-
+    /services latency, response size and transient memory grow linearly with rows per token,
+    and the fetch runs under `_db_lock` (lines 65-79). Concurrent /heartbeat requests therefore
+    wait longer as the token's row set grows, which is a cross-endpoint latency tail. Per-row
+    datetime parsing and Pydantic validation add CPU outside the lock (lines 160-168 plus
+    response_model on line 149). DB file growth is unbounded. Disk exhaustion would turn every
+    write into an exception and then an HTTP 500 (lines 138-139), but that is unlikely within a
+    test window. Insert cost grows only logarithmically with the B-tree, which is a weak signal.
+    Condition: whether /services degrades with growth in OTHER tokens' rows depends on the
+    SQLite query plan (see controllability notes).
+
+controllability:
+  level: workload
+  notes: >-
+    HTTP traffic alone is enough. The workload must control key diversity: (a) generate a
+    monotonically growing set of distinct serviceIds under one fixed token, and poll POST
+    /services for that token at a constant rate, which activates both write and read sides;
+    (b) optionally, generate distinct tokens, which grows only the file and indexes and affects
+    /services only if the planner does not use idx_heartbeats_token. Long serviceId/token
+    strings speed up byte growth per row (aggravator from r2 SELF-SOURCED 1 and r3 F6). Run a
+    single uvicorn process, as `__main__` does, and start from a fresh db.sqlite3 in a known cwd
+    so baseline size is known. Do not enable multiple workers, because that activates the
+    separate non-aging multi-process lock contention (C3 in triage.md) and confounds the result.
+    Record EXPLAIN QUERY PLAN for the SELECT once (index on token plus temp B-tree sort, or a
+    PK-autoindex scan).
+
+activation_criteria:
+  path_executed: >-
+    Instrumentation shows the INSERT branch of upsert_heartbeat executing, meaning the row
+    count rises after a commit. It also shows list_services_for_token returning
+    len(rows) equal to the number of distinct serviceIds sent under the polled token.
+  resource_growth: >-
+    SELECT COUNT(*) FROM heartbeats, and COUNT(*) WHERE token = <polled token>, grow
+    monotonically and roughly linearly with the number of new pairs sent, with no decrease
+    during the run. db.sqlite3 size (PRAGMA page_count * page_size) grows with the row count.
+    /services response bytes and the time spent inside `with _db_lock` in
+    list_services_for_token grow with rows per token. Expect at least a several-fold increase
+    across 10^4 to 10^5 distinct pairs.
+  control_contrast: >-
+    A control workload that replays a FIXED set of (serviceId, token) pairs at the same request
+    rate must show a flat row count and a flat file size after warm-up. It must also show flat
+    /services latency, response size and lock-hold time. If latency drifts in the control run,
+    the cause is something other than this mechanism (for example disk or OS effects) and must
+    not be attributed to F1.
+
+expected_symptoms:
+  - "row count of heartbeats and db.sqlite3 size (page_count) increase monotonically with distinct pairs"
+  - "POST /services latency and response size for the polled token increase linearly with its row count"
+  - "time _db_lock is held per /services call increases, raising the p95/p99 latency of concurrent POST /heartbeat"
+  - "peak (transient) RSS during /services calls increases with rows per token"
+  - "CPU per /services request increases (per-row fromisoformat + ServiceOut validation/serialization)"
+  - "eventually, on disk exhaustion, POST /heartbeat returns HTTP 500 (unlikely within a test window)"
+
+priority: 2
+stability: "3/3 reviews (r1 split write/read sides into F1+F3; r2, r3 merged); tools: semgrep-aging (2 rules) + slowql PERF-SCAN-003"

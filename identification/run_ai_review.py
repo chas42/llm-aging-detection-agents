@@ -5,8 +5,9 @@
 
 Isolation (the reviewer must not see the paper's reports, finding cards or tool results):
   - each run happens in a fresh temporary directory OUTSIDE the project (no parent CLAUDE.md),
-    containing only a copy of corpus/<app>/src (as ./app) and .claude/settings.json enabling
-    the VoltAgent plugins;
+    containing only a copy of corpus/<app>/src (as ./app); the VoltAgent plugins are loaded
+    explicitly with --plugin-dir from the local plugin cache (project-scope plugins are NOT
+    loaded in a directory other than the project's: the first attempt failed that way);
   - Bash/Write/Edit and web tools are denied by the CLI (the paper only asked for it in the
     prompt), and the directory hash is checked before/after to prove nothing was modified;
   - no session persistence; one fresh session per repetition.
@@ -18,6 +19,7 @@ Output, in identification/<app>/:
 import argparse
 import hashlib
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -42,13 +44,30 @@ def tree_hash(path: Path) -> str:
     return h.hexdigest()[:16]
 
 
-def plugin_versions() -> dict:
+PLUGIN_CACHE = Path.home() / ".claude" / "plugins" / "cache" / "voltagent-subagents"
+
+
+def plugin_dirs() -> dict[str, Path]:
+    """Latest cached version of each VoltAgent plugin (installed via .claude/settings.json)."""
     out = {}
-    cache = Path.home() / ".claude" / "plugins" / "cache" / "voltagent-subagents"
     for plugin in ("voltagent-qa-sec", "voltagent-lang"):
-        versions = sorted(p.name for p in (cache / plugin).iterdir()) if (cache / plugin).is_dir() else []
-        out[plugin] = versions[-1] if versions else None
+        versions = sorted((PLUGIN_CACHE / plugin).iterdir()) if (PLUGIN_CACHE / plugin).is_dir() else []
+        if not versions:
+            raise SystemExit(f"plugin {plugin} not in {PLUGIN_CACHE}; run: claude plugin install {plugin} --scope project")
+        out[plugin] = versions[-1]
     return out
+
+
+def valid_output(text: str, prefix: str) -> list[str]:
+    """Structural checks: both Phase-1 handoffs and the Phase-2 adjudication must be present."""
+    problems = []
+    if not re.search(r"\bCR-\d", text):
+        problems.append("no CR-* findings (code-reviewer handoff missing)")
+    if not re.search(rf"\b{prefix}-\d", text):
+        problems.append(f"no {prefix}-* findings (specialist handoff missing)")
+    if not re.search(r"(?i)aging relevance", text):
+        problems.append("no 'aging relevance' verdicts (performance-engineer report missing)")
+    return problems
 
 
 def main() -> int:
@@ -77,22 +96,22 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="aging-review-") as tmp:
         box = Path(tmp)
         shutil.copytree(ROOT / "corpus" / args.app / "src", box / "app")
-        (box / ".claude").mkdir()
-        shutil.copy(ROOT / ".claude" / "settings.json", box / ".claude" / "settings.json")
+        plugins = plugin_dirs()
         before = tree_hash(box / "app")
         meta = {"app": args.app, "rep": args.rep, "framework": app["framework"],
                 "template": str(template.relative_to(ROOT)), "sandbox": "<tmp>/app",
-                "plugins": plugin_versions(), "allowed_tools": ALLOW, "denied_tools": DENY,
+                "plugins": {k: v.name for k, v in plugins.items()}, "allowed_tools": ALLOW, "denied_tools": DENY,
                 "app_hash_before": before}
 
         if args.dry_run:
-            agents = subprocess.run(["claude", "plugin", "list"], cwd=box, capture_output=True, text=True, timeout=120)
-            print(agents.stdout[-3000:] or agents.stderr[-3000:])
+            print("plugin dirs:", {k: str(v) for k, v in plugins.items()})
             print(f"--- prompt ({template.name}, {len(prompt)} chars) ---\n{prompt[:600]}...")
             return 0
 
         cmd = ["claude", "-p", prompt, "--output-format", "json", "--no-session-persistence",
                "--allowedTools", *ALLOW, "--disallowedTools", *DENY]
+        for d in plugins.values():
+            cmd += ["--plugin-dir", str(d)]
         if args.model:
             cmd += ["--model", args.model]
         t0 = time.time()
@@ -108,11 +127,15 @@ def main() -> int:
         for k in ("total_cost_usd", "num_turns", "duration_ms", "modelUsage", "usage", "is_error", "subtype"):
             if k in res:
                 meta[k] = res[k]
+        prefix = re.search(r'"CR-1\.\.CR-6" or\n"(\w+)-1', template.read_text()).group(1)
+        meta["validation_problems"] = valid_output(res.get("result", ""), prefix)
+        meta["valid"] = not meta["validation_problems"]
         md.write_text(res.get("result", ""))
         meta_path.write_text(json.dumps(meta, indent=1, default=str))
         print(f"{args.app} r{args.rep}: exit={p.returncode} {meta['seconds']}s "
-              f"cost=${meta.get('total_cost_usd', '?')} unchanged={meta['app_unchanged']} -> {md.relative_to(ROOT)}")
-        return 0 if p.returncode == 0 and meta["app_unchanged"] else 1
+              f"est_usage_usd={meta.get('total_cost_usd', '?')} unchanged={meta['app_unchanged']} valid={meta['valid']} "
+              f"{meta['validation_problems'] or ''} -> {md.relative_to(ROOT)}")
+        return 0 if p.returncode == 0 and meta["app_unchanged"] and meta["valid"] else 1
 
 
 if __name__ == "__main__":
