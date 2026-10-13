@@ -23,7 +23,7 @@ Decisões tomadas (04/10/2026):
 | 4 | Julgamento de ativação (loop ≤ 3 revisões do workload) | `aging-activation-judge` | `runs/*/verdict.md` | ✅ **ACTIVATED_WITH_AGING** na 1ª iteração |
 | — | **Checkpoint 2**: resultado de ativação | Cesar | | |
 | 5 | Reparo → revisão → validação funcional | agentes de reparo (portados) | `apps/uptime-fastapi/repaired/` | ✅ APPROVE + PASS |
-| 6 | R2: app reparado + mesmo workload/seed/duração da R1; comparação | harness + juiz | `comparison_vs_*.md/png` | ⏳ aguardando `RUNS="R2"` nos 2 PCs |
+| 6 | R2: app reparado + mesmo workload/seed/duração da R1; comparação | harness + juiz | `comparison_vs_*.md/png` | ✅ **REPAIR_EFFECTIVE** |
 | 7 | Relatório do piloto para Ermeson/Roberto | manual | `docs/` | |
 
 ## Critérios (resumo; a fonte é `findings/uptime-fastapi-F4.yaml`)
@@ -73,3 +73,17 @@ Decisões tomadas (04/10/2026):
   No teste local com limite 200, as linhas param em 200 e a resposta estabiliza em 18 KB.
 - 13/10: a campanha ganhou a execução **R2** (`RUNS="R2"`): o workload, seed e duração da R1 sobre o
   app reparado. O bundle e o preflight do servidor passaram a incluir o app reparado.
+- 13/10: **R2 (Fase 6)** nos 2 PCs: app reparado, mesmo workload, seed 42 e 1 h. Preflight sem avisos
+  (governor `performance` nos dois). Juiz: **REPAIR_EFFECTIVE**
+  (`runs/20261013-013324_R2_F4_repaired/verdict.md`):
+  - linhas por token chegam a 1000 em ~105 s e ficam paradas; DB fixo em 311 kB; resposta fixa em 91 kB;
+  - nenhum sintoma da R1 se qualifica na R2: `/services` p50 fica em ~28 ms (na R1 chegou a 473),
+    heartbeat p95 em ~26 ms (205 na R1), espera no lock estável;
+  - RSS +3,3% (abaixo do limiar de 10%), em degraus, estável depois de ~30 min; termina em 58 MB
+    contra 107–131 MB na R1;
+  - custo do reparo: ~+1 ms constante no heartbeat (consulta extra + remoção por chave nova), sem
+    perda de vazão. Troca funcional: acima de 1000 serviços por token, os mais antigos somem da lista.
+  - Opcional para fortalecer: uma R2 de 2 h para confirmar a estabilidade do RSS, e uma R1 com
+    `performance` nos dois PCs para eliminar a assimetria na estimativa do custo.
+- 13/10: correção no `collect_results.sh`: o `.sha256` passa a conter só o nome do arquivo, para o
+  `sha256sum -c` funcionar depois da cópia.

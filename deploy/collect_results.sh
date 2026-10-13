@@ -19,7 +19,8 @@ fi
 # The final SQLite file is kept (it is evidence of the accumulated state); code copies are kept
 # so each run is self-describing (meta.json has their hashes).
 tar --exclude='__pycache__' -czf "$OUT" "${LIST[@]}"
-sha256sum "$OUT" > "$OUT.sha256"
+# bare file name inside the .sha256, so `sha256sum -c` works wherever both files are copied
+(cd "$(dirname "$OUT")" && sha256sum "$(basename "$OUT")" > "$(basename "$OUT").sha256")
 echo "[collect] $OUT ($(du -h "$OUT" | cut -f1)) with ${#LIST[@]} entries"
 echo "[collect] copy BOTH files to the development machine, then:"
 echo "          sha256sum -c $(basename "$OUT").sha256 && tar -xzf $(basename "$OUT") -C <aging-validation>/"
