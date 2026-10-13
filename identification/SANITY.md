@@ -1,6 +1,6 @@
 # Sanidade I1: suítes do paper × reexecução
 
-128 de 154 pares (app, suíte) idênticos regra por regra.
+132 de 154 pares (app, suíte) idênticos regra por regra.
 
 | app | suíte | paper | agora | resultado |
 |---|---|---|---|---|
@@ -120,14 +120,14 @@
 | paper-express-credit-card | codeql-security-quality | 0 | 0 | igual |
 | paper-express-credit-card | semgrep-default | 0 | 5 | paper {} · agora {'javascript.express.security.audit.express-check-csurf-middleware-usage.express-check-csurf-middleware-usage': 1, 'javascript.lang.security.audit.unsafe-formatstring.unsafe-formatstr |
 | paper-express-credit-card | slowql | 0 | 23 | paper {} · agora {'QUAL-SQLITE-001': 3, 'COST-COMPRESS-001': 2, 'QUAL-SCHEMA-003': 2, 'REL-IDEM-001': 3, 'QUAL-STYLE-005': 3, 'PERF-SCAN-003': 2, 'COST-IDX-003': 3, 'SEC-INJ-001': 1, 'PERF-IDX-001': 1 |
-| paper-express-image-converter | codeql-community-default | 0 | - | não rodado |
-| paper-express-image-converter | codeql-security-quality | 4 | - | não rodado |
+| paper-express-image-converter | codeql-community-default | 0 | 0 | igual |
+| paper-express-image-converter | codeql-security-quality | 4 | 4 | igual |
 | paper-express-image-converter | semgrep-default | 0 | 3 | paper {} · agora {'javascript.express.security.audit.express-check-csurf-middleware-usage.express-check-csurf-middleware-usage': 1, 'javascript.lang.security.audit.unsafe-formatstring.unsafe-formatstr |
 | paper-express-monitor | codeql-community-default | 0 | 0 | igual |
 | paper-express-monitor | codeql-security-quality | 3 | 3 | igual |
 | paper-express-monitor | semgrep-default | 0 | 3 | paper {} · agora {'javascript.express.security.audit.express-check-csurf-middleware-usage.express-check-csurf-middleware-usage': 1, 'javascript.lang.security.detect-child-process.detect-child-process' |
-| paper-express-uptime | codeql-community-default | 0 | - | não rodado |
-| paper-express-uptime | codeql-security-quality | 2 | - | não rodado |
+| paper-express-uptime | codeql-community-default | 0 | 0 | igual |
+| paper-express-uptime | codeql-security-quality | 2 | 2 | igual |
 | paper-express-uptime | semgrep-default | 0 | 0 | igual |
 | paper-express-uptime | slowql | 0 | 0 | igual |
 | paper-flask-credit-card | codeql-community-audit | 8 | 8 | igual |

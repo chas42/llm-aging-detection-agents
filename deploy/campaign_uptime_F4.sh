@@ -4,6 +4,8 @@
 #   R0   control, faithful to the original JMeter plan (4 fixed services, no think time)
 #   R0b  matched control: targeted workload with --key-space 4 (same load, no accumulation)
 #   R1   targeted: a new serviceId every 1/10 s (the finding's trigger)
+#   R2   repair assessment (Phase 6): R1's workload, seed and duration on the REPAIRED app
+#        (not in the default RUNS; run it with RUNS="R2")
 # then analyzes each run and packs everything with deploy/collect_results.sh.
 #
 # Modes:
@@ -35,6 +37,7 @@ fi
 TARGETED=workloads/uptime-fastapi-F4_targeted_v1.py
 CONTROL=workloads/uptime-fastapi-F4_control.py
 APP=apps/uptime-fastapi/instrumented
+REPAIRED_APP=apps/uptime-fastapi/repaired
 
 CAMP="runs/_campaign_$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$CAMP"
@@ -60,15 +63,16 @@ log() { echo "[$(date '+%F %T')] $*" | tee -a "$LOG"; }
   fi
 } > "$CAMP/system.txt" 2>&1
 
-run() {  # run <label> <workload> [workload args...]
+run() {  # run <label> <workload> [workload args...]   (app: $RUN_APP, default $APP)
   local label="$1" workload="$2"; shift 2
+  local app="${RUN_APP:-$APP}"
   log "START $label ($workload $*) for ${DURATION}s"
   if [[ $MODE == remote ]]; then
-    $PY harness/run_remote.py --server "$SERVER" --app "$APP" --instrument --workload "$workload" \
+    $PY harness/run_remote.py --server "$SERVER" --app "$app" --instrument --workload "$workload" \
         --duration "$DURATION" --seed "$SEED" --label "$label" \
         ${APP_CPUS:+--app-cpus "$APP_CPUS"} ${LOAD_CPUS:+--load-cpus "$LOAD_CPUS"} -- "$@" >> "$LOG" 2>&1
   else
-    $PY harness/run_diagnostic.py --app "$APP" --instrument --workload "$workload" \
+    $PY harness/run_diagnostic.py --app "$app" --instrument --workload "$workload" \
         --duration "$DURATION" --seed "$SEED" --label "$label" \
         --app-cpus "$APP_CPUS" --load-cpus "$LOAD_CPUS" -- "$@" >> "$LOG" 2>&1
   fi
@@ -91,7 +95,8 @@ for r in $RUNS; do
     R0)  run R0_F4_control_jmx      "$CONTROL" ;;
     R0b) run R0b_F4_matched_control "$TARGETED" --key-space 4 ;;
     R1)  run R1_F4_targeted_v1      "$TARGETED" ;;
-    *)   log "unknown run '$r' (valid: R0 R0b R1)";;
+    R2)  RUN_APP="$REPAIRED_APP" run R2_F4_repaired "$TARGETED" ;;
+    *)   log "unknown run '$r' (valid: R0 R0b R1 R2)";;
   esac
 done
 

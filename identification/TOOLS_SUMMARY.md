@@ -24,18 +24,18 @@ as demais vêm das suítes do paper, categorizadas pelas tags das regras).
 | paper-express-credit-card | paper | 3 | 0 | 4 | 3 | 15 | 6 | 31 |
 | paper-actix-credit-card | paper | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | paper-flask-image-converter | paper | 1 | 0 | 0 | 0 | 0 | 7 | 8 |
-| paper-express-image-converter | paper | 1 | 0 | 0 | 0 | 0 | 3 | 4 |
+| paper-express-image-converter | paper | 1 | 0 | 0 | 0 | 0 | 7 | 8 |
 | paper-actix-image-converter | paper | 1 | 0 | 0 | 0 | 0 | 0 | 1 |
 | paper-flask-monitor | paper | 0 | 0 | 0 | 0 | 0 | 14 | 14 |
 | paper-express-monitor | paper | 1 | 0 | 0 | 0 | 0 | 6 | 7 |
 | paper-actix-monitor | paper | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | paper-flask-uptime | paper | 2 | 1 | 1 | 0 | 7 | 5 | 16 |
-| paper-express-uptime | paper | 2 | 0 | 0 | 0 | 0 | 0 | 2 |
+| paper-express-uptime | paper | 2 | 0 | 0 | 0 | 0 | 2 | 4 |
 | paper-actix-uptime | paper | 1 | 0 | 0 | 0 | 0 | 0 | 1 |
 | os-fastapi-uptime | open-source | 0 | 0 | 0 | 1 | 0 | 4 | 5 |
 | os-fastapi-monitor | open-source | 0 | 0 | 0 | 1 | 0 | 3 | 4 |
 | os-flask-image-converter | open-source | 0 | 0 | 0 | 0 | 4 | 10 | 14 |
-| **total** | | **29** | **4** | **11** | **21** | **110** | **181** | **356** |
+| **total** | | **29** | **4** | **11** | **21** | **110** | **187** | **362** |
 
 ## Achados de aging e de vazamento de recurso (para revisão)
 

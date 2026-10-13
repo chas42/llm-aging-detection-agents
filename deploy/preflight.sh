@@ -65,6 +65,10 @@ if [[ $ROLE != client ]]; then
     && ok "instrumented app, probes off: PASS" || bad "instrumented app, probes off: FAIL"
   $PY harness/functional_check.py --app apps/uptime-fastapi/instrumented --test $T --instrument > "$OUT/fc_instr_on.log" 2>&1 \
     && ok "instrumented app, probes on: PASS" || bad "instrumented app, probes on: FAIL"
+  if [[ -d apps/uptime-fastapi/repaired ]]; then
+    $PY harness/functional_check.py --app apps/uptime-fastapi/repaired --test $T --instrument > "$OUT/fc_repaired.log" 2>&1 \
+      && ok "repaired app, probes on: PASS" || bad "repaired app, probes on: FAIL"
+  fi
 fi
 
 if [[ $ROLE == client ]]; then

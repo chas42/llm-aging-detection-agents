@@ -19,7 +19,7 @@ mkdir -p "$STAGE" dist
 
 # Only what the test machine needs: no .venv, no runs, no agent definitions.
 INCLUDE=(README.md requirements.txt docs findings harness workloads reference deploy
-         apps/uptime-fastapi/original apps/uptime-fastapi/instrumented)
+         apps/uptime-fastapi/original apps/uptime-fastapi/instrumented apps/uptime-fastapi/repaired)
 for p in "${INCLUDE[@]}"; do
   mkdir -p "$STAGE/$(dirname "$p")"
   cp -r "$p" "$STAGE/$p"
