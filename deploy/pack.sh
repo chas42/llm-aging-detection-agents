@@ -18,13 +18,12 @@ STAGE="$(mktemp -d)/$NAME"
 mkdir -p "$STAGE" dist
 
 # Only what the test machine needs: no .venv, no runs, no agent definitions.
-INCLUDE=(README.md requirements.txt docs findings harness workloads reference deploy
-         apps/uptime-fastapi/original apps/uptime-fastapi/instrumented apps/uptime-fastapi/repaired)
+INCLUDE=(README.md requirements.txt docs findings harness workloads reference deploy tests apps env)
 for p in "${INCLUDE[@]}"; do
   mkdir -p "$STAGE/$(dirname "$p")"
   cp -r "$p" "$STAGE/$p"
 done
-find "$STAGE" \( -name __pycache__ -o -name '*.pyc' -o -name '*.sqlite3*' \) -prune -exec rm -rf {} +
+find "$STAGE" \( -name __pycache__ -o -name '*.pyc' -o -name '*.sqlite3*' -o -name target \) -prune -exec rm -rf {} +
 mkdir -p "$STAGE/runs"
 
 if [[ -n "$WHEELS_PY" ]]; then
@@ -32,7 +31,7 @@ if [[ -n "$WHEELS_PY" ]]; then
   .venv/bin/pip download -q -d "$STAGE/wheelhouse" \
     --python-version "$WHEELS_PY" --platform manylinux2014_x86_64 --platform manylinux_2_17_x86_64 \
     --platform manylinux_2_28_x86_64 --only-binary=:all: \
-    -r requirements.txt -r apps/uptime-fastapi/original/requirements.txt pip setuptools wheel
+    -r requirements.txt $(for f in apps/*/original/requirements.txt; do printf -- '-r %s ' "$f"; done) pip setuptools wheel
 fi
 
 # Integrity manifest, verified by setup.sh on the target

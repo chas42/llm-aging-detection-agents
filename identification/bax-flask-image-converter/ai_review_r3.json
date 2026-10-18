@@ -1,0 +1,117 @@
+{
+ "app": "bax-flask-image-converter",
+ "rep": 3,
+ "framework": "flask",
+ "template": "identification/prompts/flask.txt",
+ "sandbox": "<tmp>/app",
+ "plugins": {
+  "voltagent-qa-sec": "1.1.2",
+  "voltagent-lang": "1.0.4"
+ },
+ "allowed_tools": [
+  "Read",
+  "Grep",
+  "Glob",
+  "Task",
+  "Agent"
+ ],
+ "denied_tools": [
+  "Bash",
+  "Write",
+  "Edit",
+  "NotebookEdit",
+  "WebFetch",
+  "WebSearch",
+  "KillShell"
+ ],
+ "app_hash_before": "cb31ce4ebccd7499",
+ "seconds": 213.0,
+ "exit": 0,
+ "app_hash_after": "cb31ce4ebccd7499",
+ "app_unchanged": true,
+ "total_cost_usd": 1.0469267,
+ "num_turns": 2,
+ "duration_ms": 140988,
+ "modelUsage": {
+  "claude-haiku-4-5-20251001": {
+   "inputTokens": 2292,
+   "outputTokens": 13,
+   "cacheReadInputTokens": 0,
+   "cacheCreationInputTokens": 0,
+   "webSearchRequests": 0,
+   "costUSD": 0.002357,
+   "contextWindow": 200000,
+   "maxOutputTokens": 32000,
+   "thinkingTokens": 0,
+   "canonicalModel": "claude-haiku-4-5",
+   "provider": "firstParty",
+   "costBasis": "list"
+  },
+  "claude-opus-5-5": {
+   "inputTokens": 20,
+   "outputTokens": 26055,
+   "cacheReadInputTokens": 207241,
+   "cacheCreationInputTokens": 47102,
+   "webSearchRequests": 0,
+   "costUSD": 0.9190322,
+   "contextWindow": 1000000,
+   "maxOutputTokens": 128000,
+   "thinkingTokens": 2365,
+   "canonicalModel": "claude-opus-5-5",
+   "provider": "firstParty",
+   "costBasis": "list"
+  },
+  "claude-sonnet-5-5": {
+   "inputTokens": 10,
+   "outputTokens": 6694,
+   "cacheReadInputTokens": 39500,
+   "cacheCreationInputTokens": 20271,
+   "webSearchRequests": 0,
+   "costUSD": 0.1255375,
+   "contextWindow": 1000000,
+   "maxOutputTokens": 128000,
+   "thinkingTokens": 488,
+   "canonicalModel": "claude-sonnet-5-5",
+   "provider": "firstParty",
+   "costBasis": "list"
+  }
+ },
+ "usage": {
+  "input_tokens": 6,
+  "cache_creation_input_tokens": 15816,
+  "cache_read_input_tokens": 92371,
+  "output_tokens": 17961,
+  "output_tokens_details": {
+   "thinking_tokens": 104
+  },
+  "server_tool_use": {
+   "web_search_requests": 0,
+   "web_fetch_requests": 0
+  },
+  "service_tier": "standard",
+  "cache_creation": {
+   "ephemeral_1h_input_tokens": 15816,
+   "ephemeral_5m_input_tokens": 0
+  },
+  "inference_geo": "global",
+  "iterations": [
+   {
+    "input_tokens": 2,
+    "output_tokens": 9945,
+    "cache_read_input_tokens": 48406,
+    "cache_creation_input_tokens": 11375,
+    "cache_creation": {
+     "ephemeral_5m_input_tokens": 0,
+     "ephemeral_1h_input_tokens": 11375
+    },
+    "type": "message"
+   }
+  ],
+  "speed": "standard",
+  "fallback_credit": null
+ },
+ "is_error": false,
+ "subtype": "success",
+ "validation_problems": [],
+ "valid": true
+}

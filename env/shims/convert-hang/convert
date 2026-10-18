@@ -1,0 +1,124 @@
+#!/bin/sh
+# PATH shim for ImageMagick `convert` that makes a fraction of conversions stall (environment-level
+# aging trigger for finding bax-flask-image-converter-F1). See README.md next to this file.
+#
+#   CONVERT_HANG_PROB   probability that a conversion stalls (default 0 = never; >= 1 = always)
+#   CONVERT_HANG_S      stall length in seconds before the real convert runs (default 36000)
+#   CONVERT_HANG_SEED   seed of the per-call decision (default 42)
+#   CONVERT_HANG_STATE  directory for the call counter and the decision log
+#                       (default ${TMPDIR:-/tmp}; the campaign gives every run a private TMPDIR)
+#
+# With CONVERT_HANG_PROB unset/0 the shim only resolves the real convert and exec()s it with the
+# arguments untouched: same output, same exit status, no state written.
+# `convert -version` / `--version` (pure info queries) never stall; only conversions do.
+
+self=$0
+
+# --- locate the real convert: first `convert` on PATH that is not this file -------------------
+# `clean` is PATH without the directories whose `convert` is this shim. The real convert is run as
+# `PATH=$clean exec convert ...`, i.e. by name: argv[0] stays "convert" exactly as the app passed it
+# (ImageMagick derives its client name, printed in error messages, from argv[0]; exec'ing it by
+# absolute path would change "convert-im6.q16: ..." into "convert: ..."), and the first `convert`
+# found on $clean is by construction $real.
+real=
+clean=
+_ifs=$IFS
+IFS=:
+set -f
+for d in $PATH; do
+    c=${d:-.}/convert
+    if [ -f "$c" ] && [ -x "$c" ] && [ "$c" -ef "$self" ]; then
+        continue                                  # a directory holding this shim: drop it
+    fi
+    clean=${clean:+$clean:}$d
+    if [ -z "$real" ] && [ -f "$c" ] && [ -x "$c" ]; then
+        real=$c
+    fi
+done
+set +f
+IFS=$_ifs
+if [ -z "$real" ]; then
+    echo "convert: not found (convert-hang shim: no real convert on PATH)" >&2
+    exit 127
+fi
+
+run_real() {
+    PATH=$clean
+    export PATH
+    exec convert "$@"
+}
+
+# --- second stage: re-executed under setpriv --pdeathsig KILL to perform a decided stall --------
+if [ -n "${_CONVERT_HANG_STALL:-}" ]; then
+    unset _CONVERT_HANG_STALL
+    if command -v setpriv >/dev/null 2>&1; then
+        setpriv --pdeathsig KILL -- sleep "${CONVERT_HANG_S:-36000}"
+    else
+        sleep "${CONVERT_HANG_S:-36000}"
+    fi
+    run_real "$@"
+fi
+
+# --- fast path: injection disabled, or an info query --------------------------------------------
+case ${CONVERT_HANG_PROB:-0} in
+    ''|0|0.|0.0|0.00|0.000|0.0000|-*) run_real "$@" ;;
+esac
+case $# in
+    1) case $1 in -version|--version) run_real "$@" ;; esac ;;
+esac
+
+# --- decide: k-th conversion of this state dir, hashed with the seed (reproducible) -------------
+state=${CONVERT_HANG_STATE:-${TMPDIR:-/tmp}}
+seed=${CONVERT_HANG_SEED:-42}
+case $seed in ''|*[!0-9]*) seed=42 ;; esac
+seed=$(( seed % 1073741824 ))
+counter=$state/convert-hang.counter
+logf=$state/convert-hang.log
+
+# threshold = floor(p * 2^32), computed once with awk (float); >= 2^32 means always
+thr=$(awk -v p="${CONVERT_HANG_PROB}" 'BEGIN { p += 0; if (p <= 0) p = 0; if (p > 1) p = 1;
+                                               printf "%.0f", p * 4294967296 }' 2>/dev/null)
+case $thr in ''|*[!0-9]*) thr=0 ;; esac
+[ "$thr" -gt 0 ] || run_real "$@"
+
+# 32-bit integer hash (xorshift-multiply, constant < 2^27 so products stay < 2^59: no overflow)
+h32() {
+    _x=$(( $1 & 4294967295 ))
+    _x=$(( ((_x >> 16) ^ _x) * 73244475 & 4294967295 ))
+    _x=$(( ((_x >> 16) ^ _x) * 73244475 & 4294967295 ))
+    _x=$(( (_x >> 16) ^ _x ))
+}
+
+decide() {  # runs under the lock when flock is available: k = ++counter, append one log line
+    k=$(cat "$counter" 2>/dev/null)
+    case $k in ''|*[!0-9]*) k=0 ;; esac
+    k=$((k + 1))
+    printf '%s\n' "$k" > "$counter"
+    h32 "$seed"
+    h32 $(( _x + k ))
+    if [ "$_x" -lt "$thr" ]; then verdict=stall; else verdict=pass; fi
+    printf '%s %s %s %s %s\n' "$(date +%s)" "$k" "$verdict" "$$" "${CONVERT_HANG_S:-36000}" >> "$logf"
+}
+
+if command -v flock >/dev/null 2>&1; then
+    exec 9>>"$state/convert-hang.lock"
+    flock -x 9
+    decide
+    flock -u 9
+    exec 9>&-
+else
+    decide
+fi
+
+if [ "$verdict" = stall ]; then
+    _CONVERT_HANG_STALL=$k
+    export _CONVERT_HANG_STALL
+    if command -v setpriv >/dev/null 2>&1; then
+        # Re-exec this same script under pdeathsig KILL, so the stalled process keeps comm "convert"
+        # and PPid = the app: if the app's request thread dies, it gets SIGKILL, and its `sleep`
+        # (with its own pdeathsig) follows. No orphaned stalls survive the app.
+        exec setpriv --pdeathsig KILL -- "$self" "$@"
+    fi
+    exec "$self" "$@"
+fi
+run_real "$@"

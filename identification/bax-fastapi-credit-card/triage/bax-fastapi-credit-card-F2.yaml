@@ -1,0 +1,80 @@
+id: bax-fastapi-credit-card-F2
+app: corpus/bax-fastapi-credit-card/src
+entrypoint: app:app            # app.py also self-starts with uvicorn on 0.0.0.0:5000
+source_report: inputs/ai_review_r1.md, inputs/ai_review_r2.md
+source_findings: ["r1:CR-3", "r2:CR-3"]
+provenance:
+  ai_reviews: ["r1:Finding 4", "r2:Finding 4"]
+  tools: []
+classification: conditional
+
+mechanism:
+  summary: >-
+    The database is switched permanently to WAL mode at startup and every request opens and closes
+    its own connection; checkpointing is left entirely to SQLite defaults (passive auto-checkpoint
+    at ~1000 pages, checkpoint + WAL deletion when the last connection closes), with no
+    journal_size_limit and no explicit checkpoint. If overlapping requests keep at least one
+    connection open continuously, the WAL is never deleted on last close and may fail to restart,
+    so the -wal file can stay at or grow beyond its high-water size for the whole uptime.
+  resource: db.sqlite3-wal file size (and db.sqlite3-shm wal-index), disk space, read-path WAL lookup cost
+  trigger: >-
+    Sustained concurrent traffic mixing /associate_card commits with /retrieve_cards reads such that
+    the number of open SQLite connections never drops to zero and reader snapshots overlap checkpoints.
+  gap: >-
+    No PRAGMA wal_checkpoint / wal_autocheckpoint / journal_size_limit; WAL cleanup depends on an idle
+    instant (no open connection) or on a passive checkpoint completing without overlapping readers.
+  suspect_code:
+    - function: init_db
+      file: app.py
+      lines: 24-44
+    - function: db_conn
+      file: app.py
+      lines: 47-56
+
+aging_elements:
+  repeatable_trigger: >-
+    Every /associate_card commit (db_conn commit at app.py:54 after INSERT at 131-137) appends frames
+    to the WAL; every request of either endpoint opens a connection (app.py:49) that may hold a read snapshot.
+  accumulation_or_exhaustion: >-
+    WAL mode is persistent (app.py:27); appended frames accumulate in db.sqlite3-wal until a
+    checkpoint backfills them and a writer can restart the log; without journal_size_limit the file
+    is never truncated while connections remain open.
+  insufficient_bounding: >-
+    Only SQLite's implicit auto-checkpoint and last-close cleanup apply (nothing in app.py configures
+    checkpointing). missing (in code): proof that overlapping readers actually starve the checkpoint;
+    with short per-request transactions SQLite may restart the WAL regularly — this is a SQLite
+    runtime behaviour, not visible in the application code.
+  plausible_degradation: >-
+    A large WAL/wal-index increases page lookup cost for readers, makes the eventual checkpoint long
+    (latency spike on whichever commit or close runs it, inside a threadpool worker that also holds
+    the write path), and consumes disk. Plausible only if growth actually occurs.
+
+controllability:
+  level: workload
+  notes: >-
+    Driven by HTTP traffic alone: sustained concurrency high enough (e.g. >= 8-16 in-flight requests,
+    no idle gaps) mixing writes of distinct pairs and reads. Whether growth occurs additionally
+    depends on the linked SQLite build's checkpoint/restart behaviour (environment). Monitoring must
+    use filesystem stat of the -wal file; an observer SQLite connection would itself prevent the
+    last-close WAL deletion and contaminate the run.
+
+activation_criteria:
+  path_executed: >-
+    Commits in db_conn while other connections are open; instrumentation (counter around
+    connect/close in db_conn) shows open-connection count stays >= 1 for long stretches (no zero crossings).
+  resource_growth: >-
+    stat size of db.sqlite3-wal exceeds the ~1000-page auto-checkpoint bound (about 4 MB at 4 KiB
+    pages) and keeps increasing or stays at its high-water mark across the run instead of returning to 0.
+  control_contrast: >-
+    Same number of requests sent serially (concurrency 1, with gaps): the -wal file is removed or
+    reset after each last close and its size never exceeds ~4 MB; the main-workload growth must not
+    appear in this control.
+
+expected_symptoms:
+  - "db.sqlite3-wal file size grows / remains at high-water mark during continuous load"
+  - "periodic latency spikes on POST /associate_card (or any request) that runs a large checkpoint"
+  - "gradual increase in POST /retrieve_cards latency as wal-index lookups grow"
+  - "disk usage growth beyond the main database file"
+
+priority: 4
+stability: "2/3 reviews (r1, r2; r3 judged WAL growth speculative); no tool"

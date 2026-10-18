@@ -9,3 +9,4 @@ results/
 .agent_token
 .venv-tools/
 tools/
+apps/*/*/target/

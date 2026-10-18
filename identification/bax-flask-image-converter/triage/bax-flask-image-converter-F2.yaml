@@ -1,0 +1,64 @@
+id: bax-flask-image-converter-F2
+app: corpus/bax-flask-image-converter/src
+entrypoint: "app:app (or `python app.py` -> Werkzeug dev server, threaded, 0.0.0.0:5000)"
+source_report: "inputs/ai_review_r1.md, inputs/ai_review_r2.md, inputs/ai_review_r3.md"
+source_findings: ["r1:Finding 1", "r1:CR-1", "r2:Finding 1", "r2:CR-1", "r3:Finding 1", "r3:FL-1"]
+provenance:
+  ai_reviews: ["r1:Finding 1", "r2:Finding 1", "r3:Finding 1"]
+  tools: []
+classification: conditional
+
+mechanism:
+  summary: >-
+    The reviews name ImageMagick's disk pixel cache in TMPDIR as a resource of the heavy
+    conversion path. The orphaning angle was added by triage. The app cleans up only its own
+    `gif_creator_*` directory, and only when control returns to the `with` block. If the
+    `convert` child is SIGKILLed (OOM killer, cgroup limit, external kill), its `magick-*`
+    pixel-cache and temp files in TMPDIR are never removed, because the app neither sets a
+    private TMPDIR for the child nor sweeps it. If the Flask process itself is killed, in-flight
+    `gif_creator_*` directories are also left behind. Repeated heavy requests that keep ending
+    in kills therefore leave disk residue that persists across requests and restarts.
+  resource: "/tmp (TMPDIR) disk space and inodes: orphaned ImageMagick `magick-*` pixel-cache/temp files and, when the server is killed, orphaned /tmp/gif_creator_* directories"
+  trigger: "Repeated POST /create-gif requests heavy enough (large targetSize, many or multi-frame inputs, appendReverted=true) that `convert` spills to a disk pixel cache and is then killed by SIGKILL (OOM killer under a memory cgroup) or the server process is killed or restarted mid-request"
+  gap: "No ImageMagick `-limit` options and no per-child TMPDIR or MAGICK_TMPDIR (lines 113-126), so the child's temp files land in the shared TMPDIR; cleanup is limited to TemporaryDirectory (line 210), which neither covers the child's files nor runs if the server process dies; there is no startup or periodic sweep"
+  suspect_code:
+    - function: run_convert_make_gif
+      file: app.py
+      lines: 113-129
+    - function: create_gif
+      file: app.py
+      lines: 210-247
+    - function: build_frame_list
+      file: app.py
+      lines: 84-94
+
+aging_elements:
+  repeatable_trigger: "Every valid POST /create-gif runs one `convert` over all frames (line 118) with -coalesce before -resize (lines 119-120); request caps are 200 files (line 74), 10000x10000 target (line 37), and boomerang about doubles frames (lines 93-94), so a client can repeatedly request conversions large enough to spill to disk."
+  accumulation_or_exhaustion: "Plausible, but not visible in app code (condition): the residue is created by ImageMagick (pixel-cache files in TMPDIR), not by the app. The app passes no env/TMPDIR to subprocess.run (line 126), so the files land in the shared temp directory. Residue persists only if the child (or the server) dies by an uncatchable signal."
+  insufficient_bounding: "The only cleanup is `with tempfile.TemporaryDirectory(prefix=\"gif_creator_\")` (line 210), which removes only the app's own directory and only on normal or exception exit of the handler; no `-limit memory/map/disk` arguments (lines 113-123); no sweep of TMPDIR anywhere."
+  plausible_degradation: "Orphaned multi-GB pixel-cache files accumulate in /tmp across requests and restarts, so free disk shrinks. Later requests then fail at f.save (line 228) or in convert (500 via lines 251-255), or the disk spill makes requests slower. Condition: requires a kill path (OOM/cgroup/external) and a pixel cache that actually goes to disk. Both depend on the environment and policy.xml."
+
+controllability:
+  level: environment
+  notes: >-
+    The workload can drive conversion size (targetSize, file count, multi-frame inputs,
+    appendReverted), but the residue only appears if something outside the app kills the
+    child with SIGKILL. Options: run under a memory cgroup smaller than ImageMagick's memory
+    limit and larger than its map threshold, set a policy.xml that forces a disk pixel cache,
+    or kill -9 `convert` children externally at intervals. Also check that ImageMagick's
+    TMPDIR is /tmp, and that the policy.xml in use does not reject the sizes outright, because
+    a strict policy makes `convert` fail fast and leaves nothing behind.
+
+activation_criteria:
+  path_executed: "Instrumentation shows run_convert_make_gif reaching subprocess.run at app.py:126 and returning a negative returncode (-9) / RuntimeError at line 129, or the server process being killed while a request is inside the `with` block at line 210."
+  resource_growth: "Count and total bytes of /tmp/magick-* (and /tmp/gif_creator_*) files grow after each killed conversion and stay after load stops; df free space on the TMPDIR filesystem falls monotonically across the run."
+  control_contrast: "With the same heavy workload but no kill path (no memory cgroup / no external SIGKILL, conversions completing or failing normally), /tmp/magick-* and /tmp/gif_creator_* counts return to baseline after each request."
+
+expected_symptoms:
+  - "Free space on the TMPDIR filesystem decreases across the run; /tmp/magick-* file count grows"
+  - "Orphaned /tmp/gif_creator_* directories after server kills/restarts"
+  - "Increasing 500 error rate (ENOSPC during f.save or convert failures) late in the run"
+  - "Higher POST /create-gif latency as disk fills and I/O contention rises"
+
+priority: 4
+stability: "triage-sourced: 3/3 reviews name the pixel-cache disk resource in their Finding 1 but rate it transient; none identifies orphaning on abnormal termination; no tool"

@@ -57,18 +57,43 @@ else
 fi
 
 if [[ $ROLE != client ]]; then
-  echo "== Functional tests" | tee -a "$OUT/report.txt"
-  T=reference/tests/test_uptime.py
-  $PY harness/functional_check.py --app apps/uptime-fastapi/original --test $T > "$OUT/fc_original.log" 2>&1 \
-    && ok "original app: PASS" || bad "original app: FAIL (see $OUT/fc_original.log)"
-  $PY harness/functional_check.py --app apps/uptime-fastapi/instrumented --test $T > "$OUT/fc_instr_off.log" 2>&1 \
-    && ok "instrumented app, probes off: PASS" || bad "instrumented app, probes off: FAIL"
-  $PY harness/functional_check.py --app apps/uptime-fastapi/instrumented --test $T --instrument > "$OUT/fc_instr_on.log" 2>&1 \
-    && ok "instrumented app, probes on: PASS" || bad "instrumented app, probes on: FAIL"
-  if [[ -d apps/uptime-fastapi/repaired ]]; then
-    $PY harness/functional_check.py --app apps/uptime-fastapi/repaired --test $T --instrument > "$OUT/fc_repaired.log" 2>&1 \
-      && ok "repaired app, probes on: PASS" || bad "repaired app, probes on: FAIL"
-  fi
+  ulimit -n "$(ulimit -Hn)" 2>/dev/null || true
+  NOFILE=$(ulimit -n); NPROC=$(ulimit -u)
+  [[ "$NOFILE" == unlimited || $NOFILE -ge 8192 ]] && ok "open files limit $NOFILE" \
+    || warn "open files limit $NOFILE (< 8192): Monitor R1 needs ~1,700 FDs at 8 h; raise the hard limit in /etc/security/limits.conf"
+  [[ "$NPROC" == unlimited || $NPROC -ge 4096 ]] && ok "process limit $NPROC" || warn "process limit $NPROC (< 4096)"
+
+  echo "== Tools needed by the apps" | tee -a "$OUT/report.txt"
+  for t in setpriv flock; do command -v $t >/dev/null && ok "$t available" || bad "$t missing (util-linux)"; done
+  command -v convert >/dev/null && ok "ImageMagick: $(convert -version | head -1 | cut -c1-60)" \
+    || bad "ImageMagick missing (sudo apt install imagemagick)"
+  for m in apps/*/*/app.yaml; do
+    d=$(dirname "$m")
+    if grep -q '^build:' "$m"; then
+      bin=$($PY -c "import sys,yaml; print(yaml.safe_load(open(sys.argv[1]))['start'][0].replace('{appdir}', sys.argv[2]))" "$m" "$d")
+      [[ -x "$bin" ]] && ok "$d built" || bad "$d not built: run bash deploy/build_apps.sh (needs Rust + build-essential)"
+    fi
+  done
+
+  echo "== Functional tests (every variant of every app with a campaign.yaml)" | tee -a "$OUT/report.txt"
+  for c in apps/*/campaign.yaml; do
+    app=$(basename "$(dirname "$c")")
+    T=$($PY -c "import sys,yaml; print(yaml.safe_load(open(sys.argv[1])).get('test',''))" "$c")
+    KNOWN=$($PY -c "import sys,yaml; print(yaml.safe_load(open(sys.argv[1])).get('test_known_failure',''))" "$c")
+    [[ -z "$T" ]] && { warn "$app: no 'test' in campaign.yaml"; continue; }
+    for v in original instrumented repaired; do
+      [[ -d apps/$app/$v ]] || continue
+      flag=""; [[ $v != original ]] && flag="--instrument"
+      L="$OUT/fc_${app}_$v.log"
+      if $PY harness/functional_check.py --app apps/$app/$v --test "$T" $flag > "$L" 2>&1; then
+        ok "$app/$v: PASS"
+      elif [[ -n "$KNOWN" ]] && grep -qF "$KNOWN" "$L" && [[ $(grep -c "^WARNING" "$L") -eq 1 ]]; then
+        ok "$app/$v: only the known pre-existing failure (\"$KNOWN\")"
+      else
+        bad "$app/$v: FAIL (see $L)"
+      fi
+    done
+  done
 fi
 
 if [[ $ROLE == client ]]; then

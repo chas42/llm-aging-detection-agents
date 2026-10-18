@@ -1,0 +1,69 @@
+id: bax-flask-image-converter-F1
+app: corpus/bax-flask-image-converter/src
+entrypoint: "app:app (or `python app.py` -> Werkzeug dev server, threaded, 0.0.0.0:5000)"
+source_report: "inputs/ai_review_r1.md, inputs/ai_review_r2.md, inputs/ai_review_r3.md, inputs/tool_findings.json"
+source_findings: ["r1:Finding 2", "r1:CR-2", "r1:FL-1", "r1:FL-5", "r2:Finding 1", "r2:Finding 2", "r2:CR-1", "r2:CR-4", "r2:FL-1", "r3:Finding 1", "r3:Finding 2", "r3:CR-1", "r3:CR-5", "r3:FL-1", "r3:FL-2"]
+provenance:
+  ai_reviews: ["r1:Finding 2", "r2:Finding 1", "r2:Finding 2", "r3:Finding 1", "r3:Finding 2"]
+  tools: ["semgrep-aging:aging-py-subprocess-without-timeout (app.py:66)", "semgrep-aging:aging-py-subprocess-without-timeout (app.py:126)"]
+classification: conditional
+
+mechanism:
+  summary: >-
+    Every POST /create-gif runs two blocking subprocesses with no timeout: `convert -version`
+    (line 66) and the real conversion (line 126). If a child stalls or never exits, the request
+    thread, the child process, its two PIPE fds, and (for line 126) the per-request
+    `gif_creator_*` temp directory with all saved uploads stay held. Nothing releases them:
+    there is no timeout, no kill, no reaction to client disconnect, and the threaded dev server
+    has no concurrency cap. Each stalled request therefore adds a permanent unit of held
+    resources, and they pile up for as long as stalls keep happening.
+  resource: "Request threads; live `convert` child processes (and their RAM/pixel cache); pipe and socket fds; /tmp/gif_creator_* directories (up to ~50 MB uploads each); Werkzeug-spooled upload parts"
+  trigger: "Repeated POST /create-gif requests during which `convert` (probe or conversion) hangs or runs for longer than the inter-arrival time; the hang must come from the environment (stalling binary/delegate, slow disk-backed pixel cache, SIGSTOPped child) or from pathological inputs"
+  gap: "No `timeout=` on subprocess.run at lines 66 and 126, no kill or cleanup path while waiting, no admission/concurrency bound (app.run at line 261), and TemporaryDirectory cleanup only runs after convert returns"
+  suspect_code:
+    - function: ensure_imagemagick_available
+      file: app.py
+      lines: 64-68
+    - function: run_convert_make_gif
+      file: app.py
+      lines: 113-129
+    - function: create_gif
+      file: app.py
+      lines: 200, 210-247
+    - function: __main__ (app.run)
+      file: app.py
+      lines: 259-261
+
+aging_elements:
+  repeatable_trigger: "Every POST /create-gif reaches line 66 (first statement in the try, before validation); every valid POST reaches line 126 via line 238. Repetition comes from ordinary traffic."
+  accumulation_or_exhaustion: "subprocess.run at lines 66 and 126 blocks the handler thread until the child exits; for line 126 the `with tempfile.TemporaryDirectory(...)` (line 210) stays open, so saved frames (line 228) stay on disk. Each stalled request holds one thread, one child, two pipe fds and one tmpdir, and none are released while the stall lasts."
+  insufficient_bounding: "No `timeout=` argument at either call; subprocess.run only kills the child if an exception interrupts the wait, and nothing raises one. No semaphore, queue or cap anywhere in the module, and app.run (line 261) uses the threaded Werkzeug server. Caps at lines 14/37/74 bound request size, not duration."
+  plausible_degradation: "The number of held threads, processes and temp directories grows with the number of stalls, leading to /tmp exhaustion (ENOSPC on f.save, which becomes a 500 via line 254), process or thread limits, RAM pressure from stuck children, and finally an unresponsive service. Condition: requires `convert` to actually stall (not shown in the code), and the deployment must not add an external request timeout or a policy.xml `time` limit."
+
+controllability:
+  level: environment
+  notes: >-
+    HTTP traffic alone exercises the path but does not make `convert` hang. To activate the
+    mechanism, inject the stall outside the app: put a wrapper `convert` first on PATH that
+    sleeps indefinitely for a fraction of invocations, SIGSTOP the spawned children, or set a
+    tiny ImageMagick disk/map limit on a slow volume. A workload-only approximation is
+    heavy requests (e.g. targetSize 10000x10000, 200 files, appendReverted=true) arriving
+    faster than they complete. That is overload backlog, not a true hang, and must be
+    reported as such. Run under `python app.py` (threaded dev server). A fixed-size gunicorn
+    pool would change the symptom to pool saturation. Check that no policy.xml `time` limit
+    is set.
+
+activation_criteria:
+  path_executed: "Instrumentation shows entries to subprocess.run at app.py:126 (and :66) whose return is not observed within the run, and create_gif invocations that never reach the response/except branches."
+  resource_growth: "Server process thread count (/proc/<pid>/task), number of live `convert` children of the server PID, open fds of the server PID, and count/bytes of /tmp/gif_creator_* directories all increase monotonically and roughly linearly with the number of injected stalls (about +1 thread, +1 child, +2 pipe fds, +1 tmpdir per stalled request) and do not return to baseline after load stops."
+  control_contrast: "With the same request mix and rate but an unmodified, non-stalling `convert`, thread count, child count, fds and gif_creator_* count must return to baseline after each request or burst, with no monotonic growth over the run."
+
+expected_symptoms:
+  - "Server thread count and live `convert` child count grow over time (monotone, stepwise per stall)"
+  - "/tmp usage and number of /tmp/gif_creator_* directories grow"
+  - "Open file descriptors of the server process grow"
+  - "Client-side timeouts / unanswered requests for the stalled requests; latency of healthy POST /create-gif rises if stalled children consume CPU or RAM"
+  - "Late-stage failures: 500 responses (ENOSPC from f.save, OSError/'can't start new thread' on spawn) and eventually an unresponsive server"
+
+priority: 2
+stability: "3/3 reviews (r1 rates it conditional aging; r2 and r3 rate the containing finding non-aging but name it as the closest conditional path) + semgrep-aging (both call sites)"

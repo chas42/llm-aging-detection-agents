@@ -1,0 +1,68 @@
+{
+ "app": "paper-actix-uptime",
+ "reviews": [
+  "ai_review_r1.md",
+  "ai_review_r2.md",
+  "ai_review_r3.md"
+ ],
+ "seconds": 102.9,
+ "exit": 0,
+ "allowed_tools": [
+  "Read",
+  "Grep",
+  "Glob",
+  "Write"
+ ],
+ "denied_tools": [
+  "Bash",
+  "NotebookEdit",
+  "WebFetch",
+  "WebSearch",
+  "KillShell",
+  "Task",
+  "Agent"
+ ],
+ "unchanged": {
+  "app": true,
+  "inputs": true
+ },
+ "total_cost_usd": 0.6731090000000001,
+ "num_turns": 11,
+ "modelUsage": {
+  "claude-haiku-4-5-20251001": {
+   "inputTokens": 2196,
+   "outputTokens": 19,
+   "cacheReadInputTokens": 0,
+   "cacheCreationInputTokens": 0,
+   "webSearchRequests": 0,
+   "costUSD": 0.002291,
+   "contextWindow": 200000,
+   "maxOutputTokens": 32000,
+   "thinkingTokens": 0,
+   "canonicalModel": "claude-haiku-4-5",
+   "provider": "firstParty",
+   "costBasis": "list"
+  },
+  "claude-opus-5-5": {
+   "inputTokens": 12,
+   "outputTokens": 10128,
+   "cacheReadInputTokens": 244970,
+   "cacheCreationInputTokens": 52402,
+   "webSearchRequests": 0,
+   "costUSD": 0.670818,
+   "contextWindow": 1000000,
+   "maxOutputTokens": 128000,
+   "thinkingTokens": 2793,
+   "canonicalModel": "claude-opus-5-5",
+   "provider": "firstParty",
+   "costBasis": "list"
+  }
+ },
+ "is_error": false,
+ "subtype": "success",
+ "cards": [
+  "paper-actix-uptime-F1.yaml"
+ ],
+ "card_problems": [],
+ "valid": true
+}

@@ -1,0 +1,5 @@
+# Rust/Actix: built once in the app dir (deploy/build_apps.sh), then the release binary is started.
+# The port is hardcoded in src/main.rs (0.0.0.0:3000).
+build: ["cargo", "build", "--release", "--locked"]
+start: ["{appdir}/target/release/uptime_service"]
+port: 3000

@@ -87,6 +87,8 @@ def main() -> int:
     ap.add_argument("--interval", type=float, default=5.0)
     ap.add_argument("--watch", nargs="*", default=["db.sqlite3"])
     ap.add_argument("--instrument", action="store_true")
+    ap.add_argument("--app-env", action="append", default=[], metavar="KEY=VALUE",
+                    help="extra environment for the app on the SERVER (repeatable); {root} = the server's bundle")
     ap.add_argument("--load-cpus", default=None, help="client-side taskset CPU list")
     ap.add_argument("workload_args", nargs=argparse.REMAINDER)
     args = ap.parse_args()
@@ -118,15 +120,17 @@ def main() -> int:
         started = agent.call("POST", "/runs/start", {
             "label": args.label, "app": args.app, "entrypoint": args.entrypoint, "app_port": args.app_port,
             "instrument": args.instrument, "interval": args.interval, "watch": args.watch,
+            "env": dict(e.split("=", 1) for e in args.app_env),
             "app_cpus": args.app_cpus, "max_duration_s": args.duration + 600}, timeout=90)
         run_id = meta["server_run_id"] = started["run_id"]
         meta["app_hashes"] = started["app_hashes"]
         if local_hashes != started["app_hashes"]:
             meta["warning"] = "app code differs between client and server bundles"
             print(f"[remote] WARNING: {meta['warning']}: {local_hashes} vs {started['app_hashes']}", file=sys.stderr)
-        if not wait_tcp(app_host, args.app_port, 30):
-            raise RuntimeError(f"app port {app_host}:{args.app_port} not reachable from the client (firewall?)")
-        meta.update(run_workload(run_dir, args.workload, f"http://{app_host}:{args.app_port}", args.duration,
+        port = meta["app_port"] = started["app_port"]  # the server decides (the app's manifest may fix it)
+        if not wait_tcp(app_host, port, 30):
+            raise RuntimeError(f"app port {app_host}:{port} not reachable from the client (firewall?)")
+        meta.update(run_workload(run_dir, args.workload, f"http://{app_host}:{port}", args.duration,
                                  args.seed, extra, args.load_cpus, args.interval))
     except Exception as e:
         meta["error"] = str(e)

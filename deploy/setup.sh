@@ -30,7 +30,12 @@ fi
 
 PIP=(.venv/bin/python -m pip install -q)
 [[ -d wheelhouse ]] && PIP+=(--no-index --find-links wheelhouse)
-"${PIP[@]}" -r requirements.txt -r apps/uptime-fastapi/original/requirements.txt
+# harness deps + every Python app's own requirements (one shared venv; pins are compatible)
+REQS=(-r requirements.txt)
+for f in apps/*/original/requirements.txt; do REQS+=(-r "$f"); done
+"${PIP[@]}" "${REQS[@]}"
 
-.venv/bin/python -c "import fastapi, uvicorn, httpx, psutil, pymannkendall, pandas, matplotlib; print('[setup] imports OK')"
+# apps that need a build step (e.g. Rust) are built by deploy/build_apps.sh
+
+.venv/bin/python -c "import fastapi, flask, uvicorn, httpx, psutil, pymannkendall, pandas, matplotlib, imageio, yaml; print('[setup] imports OK')"
 echo "[setup] done. Next: bash deploy/preflight.sh"

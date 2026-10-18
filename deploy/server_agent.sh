@@ -8,6 +8,11 @@ cd "$ROOT"
 AGENT_PORT="${AGENT_PORT:-9000}"; BIND="${BIND:-0.0.0.0}"; APP_CPUS="${APP_CPUS:-}"
 
 [[ -x .venv/bin/python ]] || { echo "run deploy/setup.sh first"; exit 1; }
+# Apps under an environment-triggered stall hold FDs/threads for the whole run (Monitor R1 reaches
+# ~1,700 FDs in 8 h): raise the soft limits to the hard ones (no root needed); recorded per run.
+ulimit -n "$(ulimit -Hn)" 2>/dev/null || true
+ulimit -u "$(ulimit -Hu)" 2>/dev/null || true
+
 if [[ ! -s .agent_token ]]; then
   ( umask 077; .venv/bin/python -c "import secrets; print(secrets.token_urlsafe(24))" > .agent_token )
   echo "[agent] new token generated in .agent_token"

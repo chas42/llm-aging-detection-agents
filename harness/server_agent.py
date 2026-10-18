@@ -34,7 +34,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from monitor import Monitor  # noqa: E402
-from run_diagnostic import ROOT, new_run_dir, port_in_use, resolve_app, start_app, stop_process, wait_port  # noqa: E402
+from run_diagnostic import ROOT, app_port, new_run_dir, parse_env, port_in_use, resolve_app, start_app, stop_process, wait_port  # noqa: E402
 
 LABEL_RE = re.compile(r"^[A-Za-z0-9_.-]{1,80}$")
 
@@ -52,7 +52,7 @@ class Agent:
         label = str(req.get("label", ""))
         if not LABEL_RE.match(label):
             raise ValueError("label must match [A-Za-z0-9_.-]{1,80}")
-        port = int(req.get("app_port", 8000))
+        port = app_port(req["app"], int(req.get("app_port", 8000)))  # the manifest may fix the port
         max_duration = float(req["max_duration_s"])
         with self.lock:
             if self.active:
@@ -63,7 +63,8 @@ class Agent:
             run_dir = new_run_dir(label)
             cpus = req.get("app_cpus", self.default_cpus)
             proc, info = start_app(run_dir, req["app"], req.get("entrypoint", "app:app"), "0.0.0.0", port,
-                                   bool(req.get("instrument", False)), cpus or None)
+                                   bool(req.get("instrument", False)), cpus or None,
+                                   parse_env([f"{k}={v}" for k, v in (req.get("env") or {}).items()]))
             if not wait_port(port, 30):
                 stop_process(proc)
                 raise RuntimeError(f"app did not start within 30s; see {run_dir.name}/server.log")

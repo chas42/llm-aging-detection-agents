@@ -1,0 +1,10 @@
+# Uptime FastAPI (pilot, finding uptime-fastapi-F4): same runs as the pilot campaign, now 8 h each.
+card: findings/uptime-fastapi-F4.yaml
+test: reference/tests/test_uptime.py
+# 8 h runs use 2 new keys/s (the pilot's 1 h runs used 10/s): at 10/s the FastAPI /services read would
+# reach ~3.8 s under the global lock and saturate after ~4 h; at 2/s it ends near ~0.8 s (decided 18/10).
+runs:
+  R0:  {variant: instrumented, workload: workloads/uptime-fastapi-F4_control.py}
+  R0b: {variant: instrumented, workload: workloads/uptime-fastapi-F4_targeted_v1.py, args: [--new-key-rate, "2", --key-space, "4"]}
+  R1:  {variant: instrumented, workload: workloads/uptime-fastapi-F4_targeted_v1.py, args: [--new-key-rate, "2"]}
+  R2:  {variant: repaired,     workload: workloads/uptime-fastapi-F4_targeted_v1.py, args: [--new-key-rate, "2"]}

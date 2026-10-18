@@ -1,0 +1,70 @@
+{
+ "app": "bax-fastapi-credit-card",
+ "reviews": [
+  "ai_review_r1.md",
+  "ai_review_r2.md",
+  "ai_review_r3.md"
+ ],
+ "seconds": 163.0,
+ "exit": 0,
+ "allowed_tools": [
+  "Read",
+  "Grep",
+  "Glob",
+  "Write"
+ ],
+ "denied_tools": [
+  "Bash",
+  "NotebookEdit",
+  "WebFetch",
+  "WebSearch",
+  "KillShell",
+  "Task",
+  "Agent"
+ ],
+ "unchanged": {
+  "app": true,
+  "inputs": true
+ },
+ "total_cost_usd": 0.9332702000000002,
+ "num_turns": 12,
+ "modelUsage": {
+  "claude-haiku-4-5-20251001": {
+   "inputTokens": 2198,
+   "outputTokens": 14,
+   "cacheReadInputTokens": 0,
+   "cacheCreationInputTokens": 0,
+   "webSearchRequests": 0,
+   "costUSD": 0.002268,
+   "contextWindow": 200000,
+   "maxOutputTokens": 32000,
+   "thinkingTokens": 0,
+   "canonicalModel": "claude-haiku-4-5",
+   "provider": "firstParty",
+   "costBasis": "list"
+  },
+  "claude-opus-5-5": {
+   "inputTokens": 14,
+   "outputTokens": 16563,
+   "cacheReadInputTokens": 363671,
+   "cacheCreationInputTokens": 65869,
+   "webSearchRequests": 0,
+   "costUSD": 0.9310022,
+   "contextWindow": 1000000,
+   "maxOutputTokens": 128000,
+   "thinkingTokens": 6937,
+   "canonicalModel": "claude-opus-5-5",
+   "provider": "firstParty",
+   "costBasis": "list"
+  }
+ },
+ "is_error": false,
+ "subtype": "success",
+ "cards": [
+  "bax-fastapi-credit-card-F1.yaml",
+  "bax-fastapi-credit-card-F2.yaml"
+ ],
+ "manual_fixes": [
+  "bax-fastapi-credit-card-F1.yaml line 36: unquoted value containing ': ' made the YAML invalid; value quoted, content unchanged (2026-10-17)"
+ ]
+}

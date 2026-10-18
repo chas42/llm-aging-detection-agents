@@ -36,6 +36,25 @@ def tree_hash(path: Path) -> str:
     return h.hexdigest()[:16]
 
 
+def validate_cards(out_dir: Path) -> list[str]:
+    """Every card must parse as YAML and carry the schema's top-level keys (agents do write invalid YAML:
+    an unquoted value containing ': ' happened in the 5-app batch)."""
+    import yaml
+    keys = {"id", "app", "provenance", "classification", "mechanism", "aging_elements", "controllability",
+            "activation_criteria", "expected_symptoms", "priority", "stability"}  # top level of findings/_schema.yaml
+    problems = []
+    for f in sorted(out_dir.glob("*.yaml")):
+        try:
+            card = yaml.safe_load(f.read_text())
+        except yaml.YAMLError as e:
+            problems.append(f"{f.name}: invalid YAML ({str(e).splitlines()[0]})")
+            continue
+        missing = sorted(keys - set(card or {}))
+        if missing:
+            problems.append(f"{f.name}: missing keys {missing}")
+    return problems
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--app", required=True)
@@ -94,10 +113,12 @@ def main() -> int:
         shutil.copytree(box / "out", out_dir)
         (out_dir / "agent_reply.md").write_text(res.get("result", ""))
         meta["cards"] = sorted(f.name for f in out_dir.glob("*.yaml"))
+        meta["card_problems"] = validate_cards(out_dir)
+        meta["valid"] = bool(meta["cards"]) and not meta["card_problems"]
         (out_dir / "run.json").write_text(json.dumps(meta, indent=1, default=str))
     print(f"{args.app}: exit={p.returncode} {meta['seconds']}s est_usage_usd={meta.get('total_cost_usd', '?')} "
-          f"cards={meta['cards']} unchanged={meta['unchanged']}")
-    return 0 if p.returncode == 0 and all(meta["unchanged"].values()) and meta["cards"] else 1
+          f"cards={meta['cards']} unchanged={meta['unchanged']} valid={meta['valid']} {meta['card_problems'] or ''}")
+    return 0 if p.returncode == 0 and all(meta["unchanged"].values()) and meta["valid"] else 1
 
 
 if __name__ == "__main__":

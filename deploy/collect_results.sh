@@ -2,6 +2,7 @@
 # Packs the evidence of a campaign (or all runs) for transfer back to the development machine.
 #   bash deploy/collect_results.sh                       # every run under runs/
 #   bash deploy/collect_results.sh runs/_campaign_<ts>   # only the runs of that campaign
+#   bash deploy/collect_results.sh runs/_campaign_<ts> runs/<run> ...   # those runs only
 # Output: results/aging-results-<host>-<timestamp>.tar.gz (+ .sha256)
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -10,8 +11,12 @@ mkdir -p results
 OUT="results/aging-results-$(hostname -s)-$(date +%Y%m%d-%H%M%S).tar.gz"
 
 if [[ -n "${1:-}" ]]; then
-  CAMP="${1%/}"
-  LIST=("$CAMP" $(cat "$CAMP/runs.txt" 2>/dev/null || true))
+  CAMP="${1%/}"; shift
+  if [[ $# -gt 0 ]]; then
+    LIST=("$CAMP" "$@")                      # explicit run dirs (deploy/campaign.py: one tarball per app)
+  else
+    LIST=("$CAMP" $(cat "$CAMP/runs.txt" 2>/dev/null || true))
+  fi
   LIST+=($(ls -d runs/_preflight_* 2>/dev/null | tail -2))  # last preflight(s), any role
 else
   LIST=(runs/*)

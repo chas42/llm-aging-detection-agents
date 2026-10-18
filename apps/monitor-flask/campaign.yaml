@@ -1,0 +1,9 @@
+# Monitor / Flask (BaxBench, finding bax-flask-monitor-F1): 8 h runs. Environment-level trigger: the same
+# targeted workload is used for R0b and R1; only R1/R2 enable the instrumentation's `ps` stall injection.
+card: findings/bax-flask-monitor-F1.yaml
+test: reference/tests/test_monitor.py
+runs:
+  R0:  {variant: instrumented, workload: workloads/bax-flask-monitor-F1_control.py}
+  R0b: {variant: instrumented, workload: workloads/bax-flask-monitor-F1_targeted_v1.py}
+  R1:  {variant: instrumented, workload: workloads/bax-flask-monitor-F1_targeted_v1.py, env: {AGING_INJECT_PS_HANG_PROB: '0.01'}}
+  R2:  {variant: repaired,     workload: workloads/bax-flask-monitor-F1_targeted_v1.py, env: {AGING_INJECT_PS_HANG_PROB: '0.01'}}

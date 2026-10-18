@@ -15,6 +15,9 @@ Workload contract (what workload scripts must accept):
     python <workload.py> --base-url URL --duration SECONDS --seed N --out client.csv [extra args]
 and write client.csv with at least: ts,endpoint,status,latency_ms,resp_bytes
 
+How an app starts: an optional apps/<app>/<variant>/app.yaml manifest (see load_manifest); without
+one, the app is an ASGI module started with uvicorn on the requested port (the pilot's behavior).
+
 Two-machine mode (server and load generator on different hosts): harness/server_agent.py on the
 server + harness/run_remote.py on the client; both reuse start_app()/run_workload() from here.
 
@@ -32,17 +35,22 @@ import platform
 import shutil
 import signal
 import socket
+import re
+import resource
 import subprocess
 import sys
 import time
 from pathlib import Path
+
+import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from monitor import Monitor  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 PYTHON = str(ROOT / ".venv" / "bin" / "python")
-IGNORE = shutil.ignore_patterns("__pycache__", "*.pyc", "*.sqlite3*", "*.db", ".venv")
+IGNORE = shutil.ignore_patterns("__pycache__", "*.pyc", "*.sqlite3*", "*.db", ".venv", "target")
+CODE_GLOBS = ("*.py", "*.rs", "*.js", "Cargo.toml")
 
 
 def wait_port(port: int, timeout: float) -> bool:
@@ -68,10 +76,8 @@ def pinned(cmd: list[str], cpus: str | None) -> list[str]:
 
 
 def hash_tree(path: Path) -> dict[str, str]:
-    return {
-        str(p.relative_to(path)): hashlib.sha256(p.read_bytes()).hexdigest()[:16]
-        for p in sorted(path.rglob("*.py"))
-    }
+    files = sorted({p for g in CODE_GLOBS for p in path.rglob(g) if "target" not in p.relative_to(path).parts})
+    return {str(p.relative_to(path)): hashlib.sha256(p.read_bytes()).hexdigest()[:16] for p in files}
 
 
 def stop_process(proc: subprocess.Popen) -> int | None:
@@ -101,21 +107,69 @@ def resolve_app(app: str) -> Path:
     return path
 
 
+def load_manifest(app: str) -> dict:
+    """apps/<app>/<variant>/app.yaml, all keys optional:
+        start: [argv...]   placeholders {python} {host} {port} {appdir} {entrypoint} {root} {path} {rundir}
+                           {tmpdir} (= <run dir>/tmp, created per run); run in the
+                           run's workdir (a fresh copy of the app)
+        port:  N           the app's own fixed port (overrides the requested one)
+        env:   {K: V}      extra environment, same placeholders
+        build: [argv...]   run once in the app dir before any run (deploy/build_apps.sh)
+    Without a manifest: an ASGI module started with uvicorn on the requested port."""
+    f = resolve_app(app) / "app.yaml"
+    if not f.exists():
+        return {}
+    return yaml.safe_load(f.read_text()) or {}
+
+
+def app_port(app: str, requested: int) -> int:
+    return int(load_manifest(app).get("port") or requested)
+
+
+ENV_KEY = re.compile(r"^[A-Z_][A-Z0-9_]*$")
+
+
+def parse_env(pairs: list[str] | None) -> dict[str, str]:
+    """KEY=VALUE strings -> dict (values may use the start-command placeholders, plus {root} {path})."""
+    out = {}
+    for item in pairs or []:
+        key, sep, value = item.partition("=")
+        if not sep or not ENV_KEY.match(key):
+            raise ValueError(f"bad --app-env entry (want KEY=VALUE): {item}")
+        out[key] = value
+    return out
+
+
 def start_app(run_dir: Path, app: str, entrypoint: str, host: str, port: int, instrument: bool,
-              cpus: str | None) -> tuple[subprocess.Popen, dict]:
-    """Copy the app into run_dir/workdir (fresh database) and start uvicorn. Shared by the local
-    mode below and by harness/server_agent.py (two-machine mode)."""
+              cpus: str | None, extra_env: dict[str, str] | None = None) -> tuple[subprocess.Popen, dict]:
+    """Copy the app into run_dir/workdir (fresh database) and start it as its manifest says.
+    Shared by the local mode below and by harness/server_agent.py (two-machine mode).
+    `port` must already be app_port(app, requested)."""
+    app_dir = resolve_app(app)
     workdir = run_dir / "workdir"
-    shutil.copytree(resolve_app(app), workdir, ignore=IGNORE)
+    shutil.copytree(app_dir, workdir, ignore=IGNORE)
+    manifest = load_manifest(app)
+    (run_dir / "tmp").mkdir(exist_ok=True)  # a private temp dir per run, offered as {tmpdir}
+    subst = {"python": PYTHON, "host": host, "port": str(port), "appdir": str(app_dir), "entrypoint": entrypoint,
+             "root": str(ROOT), "path": os.environ.get("PATH", ""), "rundir": str(run_dir),
+             "tmpdir": str(run_dir / "tmp")}
+    fill = lambda v: str(v).format(**subst)  # noqa: E731
     env = dict(os.environ, APP_SECRET=os.environ.get("APP_SECRET", "supers3cret"), PYTHONUNBUFFERED="1")
+    env.update({k: fill(v) for k, v in (manifest.get("env") or {}).items()})
+    # per-run environment (e.g. a PATH shim that makes an external binary hang: environment-level trigger)
+    env.update({k: fill(v) for k, v in (extra_env or {}).items() if ENV_KEY.match(k)})
     if instrument:
         env["AGING_INSTRUMENT"] = "1"
         env["AGING_INSTRUMENT_LOG"] = str(run_dir / "instrumentation.jsonl")
-    cmd = pinned([PYTHON, "-m", "uvicorn", entrypoint, "--host", host, "--port", str(port),
-                  "--log-level", "warning"], cpus)
+    start = manifest.get("start") or ["{python}", "-m", "uvicorn", "{entrypoint}", "--host", "{host}",
+                                      "--port", "{port}", "--log-level", "warning"]
+    cmd = pinned([fill(a) for a in start], cpus)
     with open(run_dir / "server.log", "w") as log:  # the child keeps its own descriptor
         proc = subprocess.Popen(cmd, cwd=workdir, env=env, stdout=log, stderr=subprocess.STDOUT)
     info = {"app": app, "entrypoint": entrypoint, "bind": f"{host}:{port}", "instrument": instrument,
+            "manifest": manifest, "extra_env": extra_env or {},
+            "limits": {"nofile": resource.getrlimit(resource.RLIMIT_NOFILE),
+                       "nproc": resource.getrlimit(resource.RLIMIT_NPROC)},
             "app_cpus": cpus, "app_hashes": hash_tree(workdir), "server_cmd": cmd,
             "host": {"platform": platform.platform(), "python": platform.python_version(),
                      "cpus": os.cpu_count(), "hostname": platform.node()}}
@@ -160,24 +214,25 @@ def main() -> int:
     ap.add_argument("--interval", type=float, default=5.0, help="monitor sampling interval (s)")
     ap.add_argument("--watch", nargs="*", default=["db.sqlite3"], help="files (relative to workdir) whose size is tracked")
     ap.add_argument("--instrument", action="store_true", help="set AGING_INSTRUMENT=1 for the app")
+    ap.add_argument("--app-env", action="append", default=[], metavar="KEY=VALUE",
+                    help="extra environment for the app (repeatable); placeholders {root} {path} {port} ...")
     ap.add_argument("--app-cpus", default=None, help="taskset CPU list for the server, e.g. 0")
     ap.add_argument("--load-cpus", default=None, help="taskset CPU list for the workload, e.g. 1-3")
     ap.add_argument("workload_args", nargs=argparse.REMAINDER, help="extra args after --")
     args = ap.parse_args()
     extra = [a for a in args.workload_args if a != "--"]
 
-    if port_in_use(args.port):
-        print(f"port {args.port} already in use; refusing to start", file=sys.stderr)
-        return 2
-
     try:
-        resolve_app(args.app)
+        args.port = app_port(args.app, args.port)  # the app's own port, if its manifest fixes one
     except ValueError as e:
         print(e, file=sys.stderr)
         return 2
+    if port_in_use(args.port):
+        print(f"port {args.port} already in use; refusing to start", file=sys.stderr)
+        return 2
     run_dir = new_run_dir(args.label)
     server, app_info = start_app(run_dir, args.app, args.entrypoint, "127.0.0.1", args.port,
-                                 args.instrument, args.app_cpus)
+                                 args.instrument, args.app_cpus, parse_env(args.app_env))
     meta = {"mode": "local", "label": args.label, "port": args.port, "monitor_interval_s": args.interval,
             **app_info}
 

@@ -1,0 +1,103 @@
+id: paper-actix-uptime-F1
+app: corpus/paper-actix-uptime/src
+entrypoint: "cargo run --release (binary uptime_service; HttpServer bound to 0.0.0.0:3000, routes POST /heartbeat and POST /services)"
+source_report: [inputs/ai_review_r1.md, inputs/ai_review_r2.md, inputs/ai_review_r3.md, inputs/tool_findings.json]
+source_findings: ["r1:CR-1", "r1:RE-1", "r1:CR-2", "r1:RE-2", "r1:CR-6", "r2:CR-1", "r2:RE-1", "r2:CR-2", "r2:RE-2", "r3:CR-1", "r3:RE-1", "r3:CR-2", "r3:RE-2"]
+provenance:
+  ai_reviews: ["r1:F1", "r1:F2", "r2:F1", "r2:F2", "r3:F1", "r3:F2"]
+  tools: ["semgrep-aging:aging-rs-shared-map-growth"]
+classification: supported
+
+mechanism:
+  summary: >-
+    The process-wide store `AppState.db` (Mutex<HashMap<token, HashMap<serviceId, timestamp>>>) is created
+    once in main and only ever written by POST /heartbeat via entry().or_insert_with() and insert(); no code
+    path removes, expires or caps an entry, so every distinct (token, serviceId) pair is retained for the
+    life of the process. This card merges a causal chain validated by the same workload: the write-side
+    accumulation (r*:F1, semgrep) and the read-side cost of POST /services (r*:F2), which clones, sorts and
+    JSON-serializes the whole per-token map while holding the single global std::sync::Mutex, so its lock
+    hold time grows with the accumulated per-token map and blocks heartbeats for all tokens. The /services
+    cost is not an independent aging mechanism; its growth comes entirely from the accumulation.
+  resource: >-
+    Process heap retained by AppState.db (outer token keys, inner serviceId keys, one 20-byte timestamp
+    String per pair, plus HashMap bucket capacity); secondarily, hold time of the single global Mutex and
+    the actix worker threads that block on it.
+  trigger: >-
+    POST /heartbeat with previously unseen token values and/or previously unseen serviceId values under a
+    token; for the read-side amplification, many distinct serviceIds under one token plus repeated
+    POST /services for that token, concurrent with heartbeats.
+  gap: >-
+    No remove/retain/clear, TTL, entry-count cap, per-key length cap or background sweep anywhere in
+    main.rs; validation only rejects empty/whitespace strings; JsonConfig::default() bounds only a single
+    request body. get_services has no pagination/output cap and does not release the guard before the
+    sort and serialization.
+  suspect_code:
+    - function: heartbeat
+      file: src/main.rs
+      lines: 79-98
+    - function: get_services
+      file: src/main.rs
+      lines: 116-140
+    - function: main (state creation, Db type at L13)
+      file: src/main.rs
+      lines: 150-152
+
+aging_elements:
+  repeatable_trigger: >-
+    POST /heartbeat (route at L169) reaches the insert for any non-blank token/serviceId (check at L79 is
+    only trim().is_empty()); the client chooses both keys freely, so every request carrying a new key adds
+    an entry. POST /services (L170) re-executes the full per-token scan on every call.
+  accumulation_or_exhaustion: >-
+    L97 `db.entry(req.token.clone()).or_insert_with(HashMap::new)` and L98
+    `service_map.insert(req.serviceId.clone(), timestamp)` add owned String clones to a map that lives for
+    the whole process (web::Data created once at L150-152 and cloned into every worker at L167). Growth is
+    proportional to the number of distinct (token, serviceId) pairs, not to request count: re-heartbeating
+    an existing pair overwrites a fixed-size value.
+  insufficient_bounding: >-
+    No removal call exists in the file (no remove/retain/clear/drain), no TTL, no capacity limit, no
+    background task. L156 sets only an error handler on JsonConfig::default(), so the default body limit
+    caps one request, not the store. In get_services the guard from L116 lives to function return, so the
+    clone loop (L128-135), sort_by (L138) and `.json(response_list)` serialization (L140) all run under the
+    global lock with no output bound.
+  plausible_degradation: >-
+    Over long uptime with key churn (ephemeral instance ids, rotating tokens, retired services never
+    deleted) RSS rises monotonically toward an OOM kill; HashMap rehashes of a growing map happen under the
+    lock at L97-98; /services work is O(n) clone + O(n log n) sort + O(n) serialize in the per-token map
+    size, all under one std::sync::Mutex that blocks the OS worker thread (no .await in the handlers), so
+    /services latency and heartbeat tail latency for every token rise as the map grows.
+
+controllability:
+  level: workload
+  notes: >-
+    HTTP traffic alone suffices: the workload must send heartbeats with a steadily increasing set of
+    distinct keys (e.g. a counter-suffixed serviceId under one fixed token to exercise both memory growth
+    and /services cost; optionally also new tokens for pure memory growth, which does not raise /services
+    cost per token). Key length is a growth-rate knob (up to the per-request JSON body limit). The
+    read-side symptom additionally needs periodic POST /services for the growing token and concurrent
+    heartbeat traffic; its magnitude depends on worker count (actix default = CPU count) and concurrency.
+
+activation_criteria:
+  path_executed: >-
+    Instrumentation shows the insert at L98 creating new inner keys (map len increasing after the call)
+    and/or L97 creating new outer keys, and get_services iterating the inner map at L129 for the growing
+    token; lock acquisition at L87 and L116 observed with hold-time timing.
+  resource_growth: >-
+    Gauges: total entry count of AppState.db (sum of inner map lengths) and process RSS must grow
+    monotonically and roughly linearly with the number of distinct keys sent (e.g. RSS rising by tens of MB
+    per ~10^5-10^6 new pairs, no plateau while new keys keep arriving); get_services lock hold time and
+    response size must grow with the inner-map length of the queried token.
+  control_contrast: >-
+    A control run at the same request rate and duration that cycles over a small fixed key set (e.g. 10
+    (token, serviceId) pairs) must NOT show entry-count growth beyond the fixed set, must show RSS
+    plateauing after warm-up, and must NOT show /services latency or lock hold time trending upward over
+    time.
+
+expected_symptoms:
+  - "process RSS increases monotonically with the number of distinct (token, serviceId) pairs and never decreases"
+  - "client latency (p50 and p99) of POST /services for the growing token increases with uptime, along with response body size"
+  - "tail latency (p99) of POST /heartbeat increases when /services for a large token runs concurrently (global lock contention, blocked workers)"
+  - "intermittent latency spikes on POST /heartbeat when the outer or inner HashMap rehashes under the lock"
+  - "eventual OOM kill / process termination under a memory limit, losing all state"
+
+priority: 1
+stability: "3/3 reviews (F1 accumulation in r1, r2, r3; read-side lock cost as F2 in r1, r2, r3, rated non-aging alone) + semgrep-aging (aging-rs-shared-map-growth)"

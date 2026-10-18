@@ -7,3 +7,5 @@ numpy
 pandas
 matplotlib
 pyyaml
+imageio
+pillow

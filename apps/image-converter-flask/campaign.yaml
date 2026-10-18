@@ -1,0 +1,14 @@
+# Image Converter / Flask (BaxBench, finding bax-flask-image-converter-F1): 8 h runs. Environment-level trigger
+# WITHOUT code injection: R1/R2 put a PATH shim first (env/shims/convert-hang/convert) that makes a fraction p of
+# the conversions stall. R0b uses the same targeted workload without the shim. Every run gets a private TMPDIR
+# (<run dir>/tmp) so the gif_creator_*/magick-* gauges and the shim's counter are per run.
+card: findings/bax-flask-image-converter-F1.yaml
+test: tests/functional/test_convert_image.py
+# The ORIGINAL app already fails this assertion (appendReverted: 3 frames where the spec/test expect 4);
+# every variant must fail exactly there and nowhere else (see tests/functional/README.md).
+test_known_failure: "Expected 4 frames, but got 3"
+runs:
+  R0:  {variant: instrumented, workload: workloads/bax-flask-image-converter-F1_control.py, env: {TMPDIR: '{tmpdir}'}}
+  R0b: {variant: instrumented, workload: workloads/bax-flask-image-converter-F1_targeted_v1.py, env: {TMPDIR: '{tmpdir}'}}
+  R1:  {variant: instrumented, workload: workloads/bax-flask-image-converter-F1_targeted_v1.py, env: {TMPDIR: '{tmpdir}', PATH: '{root}/env/shims/convert-hang:{path}', CONVERT_HANG_PROB: '0.02'}}
+  R2:  {variant: repaired,     workload: workloads/bax-flask-image-converter-F1_targeted_v1.py, env: {TMPDIR: '{tmpdir}', PATH: '{root}/env/shims/convert-hang:{path}', CONVERT_HANG_PROB: '0.02'}}

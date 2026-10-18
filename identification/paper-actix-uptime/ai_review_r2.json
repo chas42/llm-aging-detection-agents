@@ -1,0 +1,117 @@
+{
+ "app": "paper-actix-uptime",
+ "rep": 2,
+ "framework": "actix",
+ "template": "identification/prompts/actix.txt",
+ "sandbox": "<tmp>/app",
+ "plugins": {
+  "voltagent-qa-sec": "1.1.2",
+  "voltagent-lang": "1.0.4"
+ },
+ "allowed_tools": [
+  "Read",
+  "Grep",
+  "Glob",
+  "Task",
+  "Agent"
+ ],
+ "denied_tools": [
+  "Bash",
+  "Write",
+  "Edit",
+  "NotebookEdit",
+  "WebFetch",
+  "WebSearch",
+  "KillShell"
+ ],
+ "app_hash_before": "9f6154d74db207cd",
+ "seconds": 160.5,
+ "exit": 0,
+ "app_hash_after": "9f6154d74db207cd",
+ "app_unchanged": true,
+ "total_cost_usd": 0.8744495999999999,
+ "num_turns": 2,
+ "duration_ms": 110440,
+ "modelUsage": {
+  "claude-haiku-4-5-20251001": {
+   "inputTokens": 2521,
+   "outputTokens": 17,
+   "cacheReadInputTokens": 0,
+   "cacheCreationInputTokens": 0,
+   "webSearchRequests": 0,
+   "costUSD": 0.002606,
+   "contextWindow": 200000,
+   "maxOutputTokens": 32000,
+   "thinkingTokens": 0,
+   "canonicalModel": "claude-haiku-4-5",
+   "provider": "firstParty",
+   "costBasis": "list"
+  },
+  "claude-opus-5-5": {
+   "inputTokens": 20,
+   "outputTokens": 20551,
+   "cacheReadInputTokens": 207401,
+   "cacheCreationInputTokens": 42215,
+   "webSearchRequests": 0,
+   "costUSD": 0.7749462,
+   "contextWindow": 1000000,
+   "maxOutputTokens": 128000,
+   "thinkingTokens": 968,
+   "canonicalModel": "claude-opus-5-5",
+   "provider": "firstParty",
+   "costBasis": "list"
+  },
+  "claude-sonnet-5-5": {
+   "inputTokens": 10,
+   "outputTokens": 4951,
+   "cacheReadInputTokens": 38087,
+   "cacheCreationInputTokens": 15900,
+   "webSearchRequests": 0,
+   "costUSD": 0.0968974,
+   "contextWindow": 1000000,
+   "maxOutputTokens": 128000,
+   "thinkingTokens": 267,
+   "canonicalModel": "claude-sonnet-5-5",
+   "provider": "firstParty",
+   "costBasis": "list"
+  }
+ },
+ "usage": {
+  "input_tokens": 6,
+  "cache_creation_input_tokens": 12914,
+  "cache_read_input_tokens": 91120,
+  "output_tokens": 14036,
+  "output_tokens_details": {
+   "thinking_tokens": 173
+  },
+  "server_tool_use": {
+   "web_search_requests": 0,
+   "web_fetch_requests": 0
+  },
+  "service_tier": "standard",
+  "cache_creation": {
+   "ephemeral_1h_input_tokens": 12914,
+   "ephemeral_5m_input_tokens": 0
+  },
+  "inference_geo": "global",
+  "iterations": [
+   {
+    "input_tokens": 2,
+    "output_tokens": 7568,
+    "cache_read_input_tokens": 47454,
+    "cache_creation_input_tokens": 9126,
+    "cache_creation": {
+     "ephemeral_5m_input_tokens": 0,
+     "ephemeral_1h_input_tokens": 9126
+    },
+    "type": "message"
+   }
+  ],
+  "speed": "standard",
+  "fallback_credit": null
+ },
+ "is_error": false,
+ "subtype": "success",
+ "validation_problems": [],
+ "valid": true
+}

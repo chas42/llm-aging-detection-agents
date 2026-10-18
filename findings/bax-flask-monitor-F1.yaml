@@ -1,0 +1,95 @@
+id: bax-flask-monitor-F1
+app: app/
+entrypoint: "python app.py  (Werkzeug dev server, threaded by default, 0.0.0.0:$PORT|5000; WSGI object app:app)"
+source_report: "inputs/ai_review_r1.md, inputs/ai_review_r2.md, inputs/ai_review_r3.md, inputs/tool_findings.json"
+source_findings: ["r1:F2", "r1:CR-2", "r1:FL-3", "r2:F1", "r2:CR-1", "r2:FL-2", "r2:FL-6", "r3:Finding 2", "r3:CR-1", "r3:FL-2", "tool_findings.json[11]:aging-py-subprocess-without-timeout"]
+provenance:
+  ai_reviews: ["r1:F2", "r2:F1", "r3:Finding 2"]
+  tools: ["semgrep-aging:aging-py-subprocess-without-timeout"]
+classification: conditional
+
+mechanism:
+  summary: >
+    Every POST /monitor/commands spawns a `ps` child through subprocess.run with no timeout, synchronously
+    on the request thread. If `ps` blocks (e.g. it reads /proc/<pid>/cmdline of a process in D-state),
+    that request thread, the child process, and the parent's two pipe read-ends plus the client socket
+    are held for as long as `ps` stays blocked. Each further request adds another such set. The server
+    (app.run, threaded, one thread per connection) has no concurrency cap, and nothing cancels the call
+    when the client goes away, so held threads, PIDs and FDs grow with the number of requests that
+    arrive during the stall.
+  resource: "request threads, child `ps` processes (PIDs), and file descriptors (2 pipes per call + client socket) of the app process"
+  trigger: "repeated POST /monitor/commands while `ps` cannot complete (an external stall of /proc reads or of the ps binary)"
+  gap: "no timeout= on subprocess.run, no limit on concurrent ps invocations or request threads, no cancellation on client disconnect"
+  suspect_code:
+    - function: _run_ps
+      file: app/app.py
+      lines: 47-59
+    - function: monitor_commands
+      file: app/app.py
+      lines: 170
+    - function: "__main__ (app.run)"
+      file: app/app.py
+      lines: 187-193
+
+aging_elements:
+  repeatable_trigger: >
+    Present. Any POST /monitor/commands with a non-empty, compilable command_regex (validation at
+    app.py:160-168) reaches `ps_out = _run_ps(filter_flags)` (170), which calls subprocess.run (49-55).
+    That is one child per request, and the default flags are `aux` (45).
+  accumulation_or_exhaustion: >
+    Conditional. subprocess.run(cmd, stdout=PIPE, stderr=PIPE, text=True, check=False) blocks in
+    communicate() until the child exits. While `ps` is blocked, the request thread, the child PID and
+    the pipe FDs stay allocated. Requests that arrive during the stall stack up, one thread, one child
+    and about 3 FDs each, and none of them is released until its `ps` exits. If `ps` never exits, the
+    growth is monotonic. If `ps` is healthy, everything is released per request (the Popen context
+    inside run closes the pipes and reaps the child).
+  insufficient_bounding: >
+    Present. No `timeout=` in the call at 49-55. The excepts at 56-59 only cover launch failures
+    (FileNotFoundError or any exception from run), not a call that never returns. No semaphore or
+    concurrency limit exists anywhere in app.py. `app.run(host=host, port=port)` (193) uses the
+    Werkzeug threaded server with no thread or connection cap.
+  plausible_degradation: >
+    Conditional. Under a persistent or recurring stall, the thread, PID and FD counts move toward
+    RLIMIT_NPROC / cgroup pids.max / RLIMIT_NOFILE. After that, fork fails (OSError, which the bare
+    `except Exception` at 58 turns into 500 "Failed to execute `ps`"), new threads or connections cannot
+    be created, and POST requests hang until clients time out. The degradation grows with the number of
+    requests issued since the stall began, which is aging-shaped. Without a stall it does not occur.
+
+controllability:
+  level: environment
+  notes: >
+    HTTP traffic alone cannot make `ps` block. The client controls ps argv (shlex.split at 41), but no
+    ps flag makes it wait indefinitely; large-output flags only make it slower, which is transient
+    saturation. Something outside the app must stall `ps`. Options: a process in uninterruptible
+    sleep whose /proc/<pid>/cmdline read blocks (a hung FUSE/NFS mount, or a process holding its mmap
+    lock), or, in a test harness, a `ps` earlier on the app's PATH that sleeps or blocks on a FIFO.
+    The workload then sends a steady stream of POST /monitor/commands (e.g. {"command_regex":"."}).
+    The mechanism also depends on the entrypoint. It assumes `python app.py` (unbounded threads).
+    Under a WSGI server with a fixed worker or thread pool, the symptom becomes pool exhaustion. With
+    a worker-kill timeout, blocked `ps` children may be orphaned instead of held by the app.
+
+activation_criteria:
+  path_executed: >
+    Instrumentation around app.py:49-55 shows calls that enter subprocess.run but do not return.
+    The number of in-flight `_run_ps` calls rises with each request sent during the stall (seen via a
+    counter, or via py-spy dumps showing threads parked in Popen.communicate).
+  resource_growth: >
+    The app process's thread count (/proc/<pid>/status Threads), its number of child `ps` processes
+    (PPID = app pid), and its open FDs (ls /proc/<pid>/fd | wc -l) all grow roughly linearly with the
+    POSTs issued during the stall: +1 thread, +1 child and about +3 FDs per request. They do not fall
+    back toward baseline while the stall persists.
+  control_contrast: >
+    With a healthy `ps` at the same request rate and concurrency, the thread, child and FD counts must
+    stay at a plateau bounded by concurrency and must return to baseline once traffic stops. With the
+    stall in place but no traffic, the counts must not grow. If growth also appears in the healthy
+    control, the cause is something other than this mechanism.
+
+expected_symptoms:
+  - "POST /monitor/commands requests issued during the stall never complete (client-side timeouts; in-flight count rises)"
+  - "app process thread count, child `ps` count and open-FD count increase monotonically with requests sent"
+  - "app process VSZ grows (one thread stack per held request) and RSS grows slightly"
+  - "after a limit is reached, POST /monitor/commands returns 500 'Failed to execute `ps`' (fork EAGAIN) or new connections are refused or reset (thread/FD exhaustion)"
+  - "GET / latency or availability degrades only after thread/FD exhaustion, not before"
+
+priority: 3
+stability: "3/3 reviews (all conditional) + semgrep-aging"
