@@ -10,3 +10,4 @@ results/
 .venv-tools/
 tools/
 apps/*/*/target/
+.merged-requirements.txt

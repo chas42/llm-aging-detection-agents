@@ -31,7 +31,7 @@ if [[ -n "$WHEELS_PY" ]]; then
   .venv/bin/pip download -q -d "$STAGE/wheelhouse" \
     --python-version "$WHEELS_PY" --platform manylinux2014_x86_64 --platform manylinux_2_17_x86_64 \
     --platform manylinux_2_28_x86_64 --only-binary=:all: \
-    -r requirements.txt $(for f in apps/*/original/requirements.txt; do printf -- '-r %s ' "$f"; done) pip setuptools wheel
+    -r <(python3 deploy/merge_requirements.py) pip setuptools wheel
 fi
 
 # Integrity manifest, verified by setup.sh on the target

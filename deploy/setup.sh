@@ -31,11 +31,10 @@ fi
 PIP=(.venv/bin/python -m pip install -q)
 [[ -d wheelhouse ]] && PIP+=(--no-index --find-links wheelhouse)
 # harness deps + every Python app's own requirements (one shared venv; pins are compatible)
-REQS=(-r requirements.txt)
-for f in apps/*/original/requirements.txt; do REQS+=(-r "$f"); done
-"${PIP[@]}" "${REQS[@]}"
+"$PY" deploy/merge_requirements.py > .merged-requirements.txt   # resolves pins that differ across apps
+"${PIP[@]}" -r .merged-requirements.txt
 
 # apps that need a build step (e.g. Rust) are built by deploy/build_apps.sh
 
 .venv/bin/python -c "import fastapi, flask, uvicorn, httpx, psutil, pymannkendall, pandas, matplotlib, imageio, yaml; print('[setup] imports OK')"
-echo "[setup] done. Next: bash deploy/preflight.sh"
+echo "[setup] done. Next: bash deploy/build_apps.sh (Rust apps), then bash deploy/preflight.sh"
