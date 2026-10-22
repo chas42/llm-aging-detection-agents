@@ -77,3 +77,9 @@ O FastAPI Monitor lê `/proc` diretamente (sem subprocess), por isso a variante 
   pré-existente do Image Converter. **Ensaio da campanha completa** (5 apps × R0, R0b, R1, 30 s): 15/15
   sem falha; o shim e a injeção só ficam ativos na R1. **Calendário: um bloco por app (~24 h cada)**, na
   ordem de prioridade dos cards.
+- 22/10: **campanha 1 em andamento**. A ordem mudou: o bloco do `uptime-fastapi` rodou primeiro, e o
+  bloco do `uptime-actix` (Rust) ficou **adiado**. Problemas operacionais desta fase: o cliente desligou
+  no meio de uma execução, e a campanha chegou a rodar fora do tmux (queda do SSH = execução perdida).
+  Procedimento de recuperação: encerrar o agente do servidor (`Ctrl-C` no tmux), descartar a execução
+  interrompida e refazer só as que faltam com `RUNS=...`. Também ficou para trás um agente de teste
+  local (127.0.0.1:9000) de um comando cancelado em 18/10; encerrado em 22/10, sem efeito nos PCs.
