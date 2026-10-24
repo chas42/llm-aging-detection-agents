@@ -83,3 +83,16 @@ O FastAPI Monitor lê `/proc` diretamente (sem subprocess), por isso a variante 
   Procedimento de recuperação: encerrar o agente do servidor (`Ctrl-C` no tmux), descartar a execução
   interrompida e refazer só as que faltam com `RUNS=...`. Também ficou para trás um agente de teste
   local (127.0.0.1:9000) de um comando cancelado em 18/10; encerrado em 22/10, sem efeito nos PCs.
+- 22–24/10: **bloco uptime-fastapi (8 h, 2 chaves/s): ACTIVATED_WITH_AGING** (`docs/verdicts/uptime-fastapi-R1-8h.md`).
+  Linhas por token 200 → 57.590; `/services` p50 9,9 → 725 ms; resposta 16 KB → 5,2 MB; RSS 54 → 145 MB e
+  ainda crescendo (acompanha a maior resposta, r = 0,992, mesma inclinação do piloto); heartbeat p95
+  37,6 → 247 ms. Sem saturação (0 erros em 216 mil requisições). Os outros tokens são afetados pela
+  sobreposição com a leitura grande (lock global, GIL, serialização), não pelo plano da consulta, que
+  usa o índice. Um travamento único de 2,5 s às 5,34 h no servidor, de causa desconhecida.
+- 24/10: **bloco credit-card-fastapi (8 h): ACTIVATED_WITH_AGING, subclassificação MISTA**
+  (`docs/verdicts/credit-card-fastapi-R1-8h.md`). Por design: linhas, banco e tamanho da resposta (a spec
+  exige devolver todos os cartões). Envelhecimento: travamento de ~150 ms do processo inteiro ao
+  serializar respostas grandes (afeta outros telefones e as gravações), custo por cartão ~2,7× o
+  necessário e pico de memória crescente (54 → 113 MB). Leitura do telefone quente 9,8 → 1.270 ms (o
+  servidor é ~2,7× mais lento que a máquina da calibração). Reparo sem mudar a spec: só **parcial**.
+  Limitar de verdade exige decisão de especificação (paginação ou limite por telefone).
