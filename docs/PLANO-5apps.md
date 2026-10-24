@@ -96,3 +96,7 @@ O FastAPI Monitor lê `/proc` diretamente (sem subprocess), por isso a variante 
   necessário e pico de memória crescente (54 → 113 MB). Leitura do telefone quente 9,8 → 1.270 ms (o
   servidor é ~2,7× mais lento que a máquina da calibração). Reparo sem mudar a spec: só **parcial**.
   Limitar de verdade exige decisão de especificação (paginação ou limite por telefone).
+- 24/10: **reparo do Credit Card (dentro da spec, parcial)**: resposta pré-renderizada na thread de
+  trabalho + índice de cobertura. Revisor: **APPROVE**. Teste diferencial HTTP sem diferenças;
+  funcional PASS. Condições para avaliar a R2 em `docs/verdicts/credit-card-fastapi-repair-review.md`
+  (não usar `handler_ms`, que passou a incluir a codificação JSON).
