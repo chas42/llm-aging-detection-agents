@@ -25,8 +25,8 @@ O FastAPI Monitor lê `/proc` diretamente (sem subprocess), por isso a variante 
 | — | ⏸ checkpoint: confirmar o problema-alvo de cada app | Cesar | ✅ os 5 F1 |
 | 2 | Harness genérico (FastAPI, Flask, Rust), instrumentação, workloads (R1 + controles R0/R0b), testes locais, bundle | aqui | ✅ ensaio de 15 execuções OK |
 | — | ⏸ checkpoint antes das execuções longas | Cesar | ✅ 2 chaves/s nos Uptime; um bloco por app |
-| 3 | Campanha 1: R0, R0b, R1 × 5 apps, 8 h cada (~120 h) | 2 PCs | |
-| 4 | Juiz → reparo → revisor → teste funcional (apps ativadas) | aqui | |
+| 3 | Campanha 1: R0, R0b, R1 × 5 apps, 8 h cada (~120 h) | 2 PCs | ✅ 4 apps; Uptime Rust adiado |
+| 4 | Juiz → reparo → revisor → teste funcional (apps ativadas) | aqui | ✅ 4 apps ativadas e reparadas |
 | 5 | Campanha 2: R2 das apps reparadas, 8 h cada (até ~40 h) | 2 PCs | |
 | 6 | Consolidação: tabela por app, uso de tokens, problemas do fluxo | aqui | |
 
@@ -100,3 +100,22 @@ O FastAPI Monitor lê `/proc` diretamente (sem subprocess), por isso a variante 
   trabalho + índice de cobertura. Revisor: **APPROVE**. Teste diferencial HTTP sem diferenças;
   funcional PASS. Condições para avaliar a R2 em `docs/verdicts/credit-card-fastapi-repair-review.md`
   (não usar `handler_ms`, que passou a incluir a codificação JSON).
+- 24–25/10: **bloco image-converter-flask (8 h, shim p = 0,02): ACTIVATED_WITH_AGING** (gatilho de
+  ambiente; `docs/verdicts/image-converter-flask-R1-8h.md`). 580 travamentos, conferidos em três
+  fontes (log do shim, timeouts do cliente, conversões sem retorno). Custo por travamento (r = 1,0000):
+  +1 thread, +1 `convert`, +3 FDs, +1 diretório temporário de ~406 KB, +0,5 MB de RSS. A limpeza do
+  `TemporaryDirectory` está correta: o diretório fica preso porque a thread fica presa. As requisições
+  saudáveis quase não pioram (+1–2 %). Controles planos; a R0 (~8 s) é explicada pela lei de Little.
+- 27–28/10: **bloco monitor-flask (8 h, injeção p = 0,01): ACTIVATED_WITH_AGING**
+  (`docs/verdicts/monitor-flask-R1-8h.md`). Custo por travamento exatamente o do card: +1 thread,
+  +1 filho, +3 FDs (r = 1,000). Requisições saudáveis 20 → 101 ms (p50), porque cada `ps` varre os
+  processos travados. O `monitor.py` soma a árvore de processos (`sh` + `sleep` por travamento), e por
+  isso o critério usa `instr.proc.*`. Salto de relógio de 0,65 s no cliente na R0, sem efeito.
+- 29/10: **reparos do Monitor e do Image Converter**, com revisão adversarial
+  (`docs/verdicts/*-repair-review.md`). Monitor: timeout de 5 s, kill + reap limitado, semáforo de 8;
+  revisor pediu uma correção pequena (vaga perdida se a thread de reaper não inicia), feita.
+  Image Converter: timeouts de 60 s e 10 s, kill do grupo de processos. **O revisor achou um vazamento
+  novo criado pelo próprio reparo**: o SIGKILL deixava os arquivos de cache em disco do ImageMagick
+  (368 MB por timeout), invisível na R2. A rev 2 (SIGTERM → espera → SIGKILL) resolveu, e foi aprovada.
+  Problema do fluxo para o Roberto: **sem o revisor, o reparo teria trocado um acúmulo por outro**, e a
+  R2 não teria mostrado.
