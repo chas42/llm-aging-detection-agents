@@ -12,3 +12,6 @@ runs:
   R0b: {variant: instrumented, workload: workloads/bax-flask-image-converter-F1_targeted_v1.py, env: {TMPDIR: '{tmpdir}'}}
   R1:  {variant: instrumented, workload: workloads/bax-flask-image-converter-F1_targeted_v1.py, env: {TMPDIR: '{tmpdir}', PATH: '{root}/env/shims/convert-hang:{path}', CONVERT_HANG_PROB: '0.02'}}
   R2:  {variant: repaired,     workload: workloads/bax-flask-image-converter-F1_targeted_v1.py, env: {TMPDIR: '{tmpdir}', PATH: '{root}/env/shims/convert-hang:{path}', CONVERT_HANG_PROB: '0.02'}}
+  # Optional regression check requested by the repair review: the paper workload against the REPAIRED app
+  # (heavy legitimate conversions must not hit the new 60 s timeout). Only runs when RUNS includes R0r.
+  R0r: {variant: repaired,     workload: workloads/bax-flask-image-converter-F1_control.py, env: {TMPDIR: '{tmpdir}'}}

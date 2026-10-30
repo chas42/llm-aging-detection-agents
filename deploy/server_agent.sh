@@ -33,7 +33,7 @@ cat <<MSG
    export SERVER=http://$IP:$AGENT_PORT
    export AGING_AGENT_TOKEN=$TOKEN
    ROLE=client bash deploy/preflight.sh
-   bash deploy/campaign_uptime_F4.sh
+   APPS=<app> RUNS="..." bash deploy/campaign.sh   (inside tmux)
 ============================================================================
 MSG
 exec .venv/bin/python harness/server_agent.py --token "$TOKEN" --bind "$BIND" --port "$AGENT_PORT" \

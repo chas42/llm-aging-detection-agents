@@ -161,9 +161,9 @@ fi
 echo "== Result: $FAIL failure(s), $WARN warning(s)" | tee -a "$OUT/report.txt"
 if [[ $FAIL -eq 0 ]]; then
   case "$ROLE" in
-    local)  echo "Ready. Next: bash deploy/campaign_uptime_F4.sh (inside tmux or with nohup)";;
+    local)  echo "Ready. Next: APPS=<app> RUNS=\"...\" bash deploy/campaign.sh (inside tmux or with nohup)";;
     server) echo "Ready. Next: tmux new -s agent 'bash deploy/server_agent.sh'";;
-    client) echo "Ready. Next: bash deploy/campaign_uptime_F4.sh (with SERVER and AGING_AGENT_TOKEN set, inside tmux)";;
+    client) echo "Ready. Next: APPS=<app> RUNS=\"...\" bash deploy/campaign.sh (with SERVER and AGING_AGENT_TOKEN set, inside tmux)";;
   esac
 fi
 exit $FAIL
